@@ -31,7 +31,7 @@ class LinearVariable(Variable):
     def f_bar(self, parents: dict[str, Tensor]) -> Tensor:
         f_bar = self._intercept
         for parent_name, parent in parents.items():
-            f_bar += self._coefs[parent_name] * parent ** 2
+            f_bar += self._coefs[parent_name] * parent
             
         return f_bar
             
@@ -70,7 +70,8 @@ class SEM:
         return loss
     
     def fit_map(self, observed: dict[str, Tensor]) -> dict[str,]:
-        u_latent = nn.ParameterDict({name: torch.randn(1) for name in self._variables if name not in observed})
+        size = len(list(observed.values())[0])
+        u_latent = nn.ParameterDict({name: torch.randn(size) for name in self._variables if name not in observed})
         
         optimizer = torch.optim.LBFGS(u_latent.values(), lr=0.01, max_iter=100)
         
@@ -78,7 +79,7 @@ class SEM:
         
         def closure() -> Tensor:
             optimizer.zero_grad()
-            loss = self._loss_fn(self._expand_dict(u_latent, size), observed)
+            loss = self._loss_fn(u_latent, observed)
             loss.backward()
             return loss
         
@@ -91,40 +92,39 @@ class SEM:
         gn_hessians = {name: 1 / variable.sigma ** 2 for name, variable in self._variables.items() if name not in observed}
         
         for observed_name in observed:
-            for latent_name in gn_hessians:
-                f_bar_wrt_u = partial(
-                    self._f_bar_wrt_u,
-                    observed_name=observed_name, 
-                    latent_name=latent_name, 
-                    u_latent=u_latent,
-                )
+            f_bar_wrt_u = partial(
+                self._f_bar_wrt_u,
+                observed_name=observed_name,
+            )
                 
-                g = vmap(lambda o: grad(partial(f_bar_wrt_u, observed=o))(u_latent[latent_name][0]))(observed)
-                gn_hessians[latent_name] += torch.outer(g, g)
+            g = vmap(lambda u, o: grad(partial(f_bar_wrt_u, observed=o))(u))(u_latent, observed)
+            gn_hessians[latent_name] += torch.outer(g, g)
                 
         return gn_hessians
     
     
-    def _f_bar_wrt_u(self, u: Tensor, observed_name: str, latent_name: str, u_latent: dict[str, Tensor], observed: dict[str, Tensor]) -> Tensor:
+    def _f_bar_wrt_u(self, u: Tensor, observed_name: str, observed: dict[str, Tensor]) -> Tensor:
+        u_latent = self._unravel(u)
         values = {}
+        f_bar_observed = {}
+        
         for name, variable in self._variables.items():
             parents = {parent_name: values[parent_name] for parent_name in variable.parent_names}
             
             if name in observed:
-                if name == observed_name:
-                    return self._variables[observed_name].f_bar(parents)
-                    
-                values[name] = observed[name].clone()
-                
-            elif name == latent_name:
-                values[name] = variable.f(parents, u)
+                f_bar_observed[name] = self._variables[name].f_bar(parents)
+                values[name] = observed[name]
                 
             else:
                 values[name] = variable.f(parents, u_latent[name])
                 
-    @staticmethod
-    def _expand_dict(dct: dict[str, Tensor], size: int) -> Tensor:
-        return {name: value.expand(size) for name, value in dct.items()}
+        return f_bar_observed
+
+    def _ravel(self, u_latent: dict[str, Tensor]) -> Tensor:
+        return torch.cat(list(u_latent.values()))
+                
+    def _unravel(self, u: Tensor) -> dict[str, Tensor]:
+        return {name: u[i] for i, name in enumerate(self._variables)}
                 
         
 sem = SEM(
