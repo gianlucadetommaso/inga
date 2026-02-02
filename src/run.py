@@ -85,46 +85,67 @@ class SEM:
         
         optimizer.step(closure)
         
-        return dict(u_latent)
+        return {name: u.detach().clone() for name, u in u_latent.items()}
     
     @no_grad
-    def compute_gn_hessian(self, u_latent: dict[str, Tensor], observed: dict[str, Tensor]) -> None:
-        gn_hessians = {name: 1 / variable.sigma ** 2 for name, variable in self._variables.items() if name not in observed}
+    def approx_cov_chol(self, u_latent: dict[str, Tensor], observed: dict[str, Tensor]) -> None:
+        size = len(u_latent)
+        num_samples = len(list(u_latent.values())[0])
+        device = list(u_latent.values())[0].device
+        
+        latent_names = self._get_latent_names(u_latent)
+        u_latent_rav = self._ravel(u_latent)
+        
+        gn_hessian_rav = torch.zeros((num_samples, size, size), device=device)
+        gn_hessian_rav[:, range(size), range(size)] = Tensor([1 / self._variables[name].sigma ** 2 for name in latent_names])
         
         for observed_name in observed:
             f_bar_wrt_u = partial(
                 self._f_bar_wrt_u,
                 observed_name=observed_name,
+                latent_names=latent_names
             )
                 
-            g = vmap(lambda u, o: grad(partial(f_bar_wrt_u, observed=o))(u))(u_latent, observed)
-            gn_hessians[latent_name] += torch.outer(g, g)
+            g = vmap(lambda u, o: grad(partial(f_bar_wrt_u, observed=o))(u))(u_latent_rav, observed)
+            gn_hessian_rav += g[:, None] * g[:, :, None]
+            
+        if size == 1:
+            L = 1 / gn_hessian_rav.sqrt()
+        else:
+            Linv = torch.linalg.cholesky(gn_hessian_rav, upper=True)
+            L = torch.linalg.solve_triangular(Linv, torch.eye(size, requires_grad=False, device=device), upper=False)
                 
-        return gn_hessians
+        return L
     
+    @no_grad
+    def sample(self, map_rav: Tensor, chol_cov: Tensor, num_samples: int, latent_names: list[str]) -> dict[str, Tensor]:
+        samples_rav = map_rav.unsqueeze(-1) + chol_cov @ torch.randn(size=(map_rav.shape[1], num_samples))
+        return vmap(lambda s: self._unravel(s, latent_names), in_dims=2, out_dims=1)(samples_rav)
+        
+    def _get_latent_names(self, u_latent: dict[str, Tensor]) -> Tensor:
+        return [name for name in self._variables if name in u_latent]
     
-    def _f_bar_wrt_u(self, u: Tensor, observed_name: str, observed: dict[str, Tensor]) -> Tensor:
-        u_latent = self._unravel(u)
+    def _f_bar_wrt_u(self, u_latent_rav: Tensor, observed: dict[str, Tensor], observed_name: str, latent_names: list[str]) -> Tensor:
+        u_latent = self._unravel(u_latent_rav, latent_names)
         values = {}
-        f_bar_observed = {}
         
         for name, variable in self._variables.items():
             parents = {parent_name: values[parent_name] for parent_name in variable.parent_names}
             
             if name in observed:
-                f_bar_observed[name] = self._variables[name].f_bar(parents)
-                values[name] = observed[name]
+                if name == observed_name:
+                    return self._variables[name].f_bar(parents)
                 
+                values[name] = observed[name]
             else:
                 values[name] = variable.f(parents, u_latent[name])
-                
-        return f_bar_observed
+    
 
     def _ravel(self, u_latent: dict[str, Tensor]) -> Tensor:
-        return torch.cat(list(u_latent.values()))
+        return torch.stack(list(u_latent.values()), dim=1)
                 
-    def _unravel(self, u: Tensor) -> dict[str, Tensor]:
-        return {name: u[i] for i, name in enumerate(self._variables)}
+    def _unravel(self, u_latent_rav: Tensor, latent_names: list[str]) -> dict[str, Tensor]:
+        return {name: u_latent_rav.select(dim=-1, index=i) for i, name in enumerate(latent_names)}
                 
         
 sem = SEM(
@@ -136,7 +157,10 @@ sem = SEM(
 )
 
 values = sem.generate(10)
-observed = {"X": values["X"], "Y": values["Y"]}
+observed = {"X": values["X"]}
 
 maps = sem.fit_map(observed)
-gn_hessians = sem.compute_gn_hessian(maps, observed)
+chols_cov = sem.approx_cov_chol(maps, observed)
+maps_rav = sem._ravel(maps)
+
+samples = sem.sample(maps_rav, chols_cov, 1000, sem._get_latent_names(maps))
