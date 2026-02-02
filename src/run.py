@@ -119,7 +119,7 @@ class SEM:
     
     @no_grad
     def sample(self, map_rav: Tensor, chol_cov: Tensor, num_samples: int, latent_names: list[str]) -> dict[str, Tensor]:
-        samples_rav = map_rav.unsqueeze(-1) + chol_cov @ torch.randn(size=(map_rav.shape[1], num_samples))
+        samples_rav = map_rav.unsqueeze(-1) + torch.sum(chol_cov.unsqueeze(-1) * torch.randn(size=(len(maps_rav), 1, maps_rav.shape[1], num_samples)), dim=1)
         return vmap(lambda s: self._unravel(s, latent_names), in_dims=2, out_dims=1)(samples_rav)
         
     def _get_latent_names(self, u_latent: dict[str, Tensor]) -> Tensor:
@@ -142,7 +142,8 @@ class SEM:
     
 
     def _ravel(self, u_latent: dict[str, Tensor]) -> Tensor:
-        return torch.stack(list(u_latent.values()), dim=1)
+        latent_names = self._get_latent_names(u_latent)
+        return torch.stack([u_latent[name] for name in latent_names], dim=1)
                 
     def _unravel(self, u_latent_rav: Tensor, latent_names: list[str]) -> dict[str, Tensor]:
         return {name: u_latent_rav.select(dim=-1, index=i) for i, name in enumerate(latent_names)}
@@ -163,4 +164,5 @@ maps = sem.fit_map(observed)
 chols_cov = sem.approx_cov_chol(maps, observed)
 maps_rav = sem._ravel(maps)
 
-samples = sem.sample(maps_rav, chols_cov, 1000, sem._get_latent_names(maps))
+samples = sem.sample(maps_rav, chols_cov, 10000, sem._get_latent_names(maps))
+print()
