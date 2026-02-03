@@ -1,3 +1,13 @@
+"""Demo script for the structural equation model.
+
+This script demonstrates the SEM functionality by:
+1. Creating a simple linear SEM with variables Z -> X -> Y and Z -> Y
+2. Generating samples from the model
+3. Performing MAP inference with partial observations
+4. Computing approximate posterior samples
+5. Comparing against analytical ground truth
+"""
+
 import torch
 from torch import Tensor
 from steindag.variable.linear import LinearVariable
@@ -5,13 +15,35 @@ from steindag.sem.base import SEM
 
 
 def _get_coef(sem: SEM, var_name: str, parent_name: str) -> float:
-    """Helper to get coefficient from a LinearVariable."""
+    """Get a linear coefficient from a LinearVariable in the SEM.
+
+    Args:
+        sem: The structural equation model.
+        var_name: Name of the variable.
+        parent_name: Name of the parent variable.
+
+    Returns:
+        The linear coefficient for the specified parent.
+
+    Raises:
+        AssertionError: If the variable is not a LinearVariable.
+    """
     var = sem._variables[var_name]
     assert isinstance(var, LinearVariable)
     return var._coefs[parent_name]
 
 
 def main() -> None:
+    """Run the demo showing posterior inference on a linear SEM.
+
+    Creates a SEM with structure Z -> X, Z -> Y, X -> Y, generates samples,
+    and demonstrates posterior inference under two scenarios:
+    1. Observing only X
+    2. Observing both X and Y
+
+    Prints the absolute error between estimated and analytical posterior
+    means and variances.
+    """
     sem = SEM(
         variables=[
             LinearVariable(

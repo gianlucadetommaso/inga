@@ -1,3 +1,5 @@
+"""Structural Equation Model implementation."""
+
 from torch import Tensor, nn, vmap, no_grad
 from torch.func import grad
 import torch
@@ -6,10 +8,32 @@ from steindag.variable.base import Variable
 
 
 class SEM:
+    """A Structural Equation Model (SEM).
+
+    A SEM defines a collection of variables with causal relationships.
+    It supports forward sampling, MAP estimation, and approximate posterior inference.
+
+    Attributes:
+        _variables: Dictionary mapping variable names to Variable objects.
+    """
+
     def __init__(self, variables: list[Variable]) -> None:
+        """Initialize the SEM.
+
+        Args:
+            variables: List of variables in topological order (parents before children).
+        """
         self._variables = {variable.name: variable for variable in variables}
 
     def generate(self, num_samples: int) -> dict[str, Tensor]:
+        """Generate samples from the SEM by forward sampling.
+
+        Args:
+            num_samples: Number of samples to generate.
+
+        Returns:
+            Dictionary mapping variable names to their sampled tensor values.
+        """
         values: dict[str, Tensor] = {}
 
         for name, variable in self._variables.items():
@@ -25,6 +49,15 @@ class SEM:
     def _loss_fn(
         self, u_latent: dict[str, Tensor], observed: dict[str, Tensor]
     ) -> Tensor:
+        """Compute the negative log posterior (up to a constant).
+
+        Args:
+            u_latent: Dictionary of latent noise variables to optimize.
+            observed: Dictionary of observed variable values.
+
+        Returns:
+            The loss value (negative log posterior).
+        """
         values: dict[str, Tensor] = {}
         loss: Tensor | float = 0.0
 
@@ -49,6 +82,17 @@ class SEM:
         return loss  # type: ignore[return-value]
 
     def fit_map(self, observed: dict[str, Tensor]) -> dict[str, Tensor]:
+        """Find the MAP estimate of latent variables given observations.
+
+        Uses L-BFGS optimization to find the maximum a posteriori estimate
+        of the latent noise variables.
+
+        Args:
+            observed: Dictionary of observed variable values.
+
+        Returns:
+            Dictionary mapping latent variable names to their MAP noise estimates.
+        """
         size = len(list(observed.values())[0])
         u_latent = nn.ParameterDict(
             {
@@ -74,6 +118,19 @@ class SEM:
     def approx_cov_chol(
         self, u_latent: dict[str, Tensor], observed: dict[str, Tensor]
     ) -> Tensor:
+        """Compute the Cholesky factor of the approximate posterior covariance.
+
+        Uses a Gauss-Newton approximation to the Hessian to compute an
+        approximate covariance matrix for the posterior distribution.
+
+        Args:
+            u_latent: Dictionary of latent noise variables (e.g., MAP estimates).
+            observed: Dictionary of observed variable values.
+
+        Returns:
+            Cholesky factor of the approximate covariance matrix.
+            Shape: (num_samples, num_latent, num_latent).
+        """
         size = len(u_latent)
         num_samples = len(list(u_latent.values())[0])
         device = list(u_latent.values())[0].device
@@ -116,6 +173,21 @@ class SEM:
         num_samples: int,
         latent_names: list[str],
     ) -> dict[str, Tensor]:
+        """Sample from the approximate posterior distribution.
+
+        Generates samples from a Gaussian approximation to the posterior,
+        centered at the MAP estimate with covariance given by chol_cov.
+
+        Args:
+            maps_rav: Raveled MAP estimates. Shape: (batch_size, num_latent).
+            chol_cov: Cholesky factor of covariance. Shape: (batch_size, num_latent, num_latent).
+            num_samples: Number of posterior samples to draw.
+            latent_names: List of latent variable names in order.
+
+        Returns:
+            Dictionary mapping latent variable names to sampled values.
+            Each tensor has shape (batch_size, num_samples).
+        """
         samples_rav = maps_rav.unsqueeze(-1) + torch.sum(
             chol_cov.unsqueeze(-1)
             * torch.randn(size=(len(maps_rav), 1, maps_rav.shape[1], num_samples)),
@@ -126,6 +198,14 @@ class SEM:
         )
 
     def _get_latent_names(self, u_latent: dict[str, Tensor]) -> list[str]:
+        """Get the names of latent variables in topological order.
+
+        Args:
+            u_latent: Dictionary of latent noise variables.
+
+        Returns:
+            List of latent variable names in the order they appear in the SEM.
+        """
         return [name for name in self._variables if name in u_latent]
 
     def _f_bar_wrt_u(
@@ -135,6 +215,23 @@ class SEM:
         observed_name: str,
         latent_names: list[str],
     ) -> Tensor:
+        """Compute f_bar of an observed variable as a function of latent noise.
+
+        This is used to compute gradients for the Gauss-Newton Hessian.
+        The gradient path through other observed variables is blocked.
+
+        Args:
+            u_latent_rav: Raveled latent noise variables.
+            observed: Dictionary of observed variable values.
+            observed_name: Name of the observed variable to compute f_bar for.
+            latent_names: List of latent variable names in order.
+
+        Returns:
+            The f_bar value for the specified observed variable.
+
+        Raises:
+            ValueError: If observed_name is not found in the SEM.
+        """
         u_latent = self._unravel(u_latent_rav, latent_names)
         values: dict[str, Tensor] = {}
 
@@ -155,12 +252,29 @@ class SEM:
         raise ValueError(f"Observed variable '{observed_name}' not found in SEM")
 
     def _ravel(self, u_latent: dict[str, Tensor]) -> Tensor:
+        """Convert a dictionary of latent variables to a stacked tensor.
+
+        Args:
+            u_latent: Dictionary mapping latent names to tensors.
+
+        Returns:
+            Stacked tensor of shape (batch_size, num_latent).
+        """
         latent_names = self._get_latent_names(u_latent)
         return torch.stack([u_latent[name] for name in latent_names], dim=1)
 
     def _unravel(
         self, u_latent_rav: Tensor, latent_names: list[str]
     ) -> dict[str, Tensor]:
+        """Convert a stacked tensor back to a dictionary of latent variables.
+
+        Args:
+            u_latent_rav: Stacked tensor of shape (..., num_latent).
+            latent_names: List of latent variable names in order.
+
+        Returns:
+            Dictionary mapping latent names to tensors.
+        """
         return {
             name: u_latent_rav.select(dim=-1, index=i)
             for i, name in enumerate(latent_names)

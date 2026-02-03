@@ -1,3 +1,10 @@
+"""Tests for posterior statistics of the SEM.
+
+These tests verify that the approximate posterior inference produces
+correct mean and variance estimates by comparing against analytically
+derived ground truth for a simple linear SEM.
+"""
+
 import torch
 from torch import Tensor
 import pytest
@@ -7,6 +14,11 @@ from steindag.sem.base import SEM
 
 @pytest.fixture
 def sem() -> SEM:
+    """Create a test SEM with structure Z -> X, Z -> Y, X -> Y.
+
+    Returns:
+        A SEM with three linear variables and unit noise.
+    """
     return SEM(
         variables=[
             LinearVariable(
@@ -28,22 +40,50 @@ def sem() -> SEM:
 
 @pytest.fixture
 def values(sem: SEM) -> dict[str, Tensor]:
+    """Generate sample values from the SEM.
+
+    Args:
+        sem: The structural equation model.
+
+    Returns:
+        Dictionary of generated values for all variables.
+    """
     torch.manual_seed(42)
     return sem.generate(10)
 
 
 def _get_coef(sem: SEM, var_name: str, parent_name: str) -> float:
-    """Helper to get coefficient from a LinearVariable."""
+    """Get a linear coefficient from a LinearVariable in the SEM.
+
+    Args:
+        sem: The structural equation model.
+        var_name: Name of the variable.
+        parent_name: Name of the parent variable.
+
+    Returns:
+        The linear coefficient for the specified parent.
+
+    Raises:
+        AssertionError: If the variable is not a LinearVariable.
+    """
     var = sem._variables[var_name]
     assert isinstance(var, LinearVariable)
     return var._coefs[parent_name]
 
 
 class TestPosteriorStats:
+    """Tests for posterior mean and variance accuracy."""
+
     def test_posterior_stats_observe_x_only(
         self, sem: SEM, values: dict[str, Tensor]
     ) -> None:
-        """Test posterior mean and variance when only X is observed."""
+        """Test posterior mean and variance when only X is observed.
+
+        For the model Z -> X with X = alpha*Z + noise, the analytical
+        posterior of Z given X is:
+        - mean: alpha * X / (1 + alpha^2)
+        - variance: 1 / (1 + alpha^2)
+        """
         alpha = _get_coef(sem, "X", "Z")
 
         observed: dict[str, Tensor] = {"X": values["X"]}
@@ -71,7 +111,13 @@ class TestPosteriorStats:
     def test_posterior_stats_observe_x_and_y(
         self, sem: SEM, values: dict[str, Tensor]
     ) -> None:
-        """Test posterior mean and variance when X and Y are observed."""
+        """Test posterior mean and variance when X and Y are observed.
+
+        For the model Z -> X, Z -> Y, X -> Y with observations blocking
+        the X -> Y path, the analytical posterior of Z given X, Y is:
+        - mean: (gamma * (Y - beta*X) + alpha * X) / (1 + alpha^2 + gamma^2)
+        - variance: 1 / (1 + alpha^2 + gamma^2)
+        """
         alpha = _get_coef(sem, "X", "Z")
         beta = _get_coef(sem, "Y", "X")
         gamma = _get_coef(sem, "Y", "Z")
