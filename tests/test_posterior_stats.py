@@ -106,6 +106,40 @@ class TestPosteriorStats:
             f"Posterior variance error too large: {var_error}"
         )
 
+    def test_causal_effect_equals_beta_when_observing_x_only(
+        self, sem: SEM, values: dict[str, Tensor]
+    ) -> None:
+        """Test that causal effect of X on Y equals beta when only X is observed.
+
+        For the linear model Y = beta*X + gamma*Z + noise, the causal effect
+        of X on Y is the partial derivative dY/dX = beta, which is constant
+        across all observations.
+
+        The variance of the causal effect should be 0 since beta is a constant.
+        """
+        beta = _get_coef(sem, "Y", "X")
+
+        observed: dict[str, Tensor] = {"X": values["X"]}
+
+        sem.posterior.fit(observed)
+
+        causal_effect = sem.causal_effect(
+            observed, treatment_name="X", outcome_name="Y"
+        )
+        causal_effect_var = sem.causal_effect_var(
+            observed, treatment_name="X", outcome_name="Y"
+        )
+
+        expected_causal_effect = torch.full_like(causal_effect, beta)
+        expected_causal_effect_var = torch.zeros_like(causal_effect_var)
+
+        assert torch.allclose(causal_effect, expected_causal_effect, atol=1e-5), (
+            f"Causal effect should equal beta={beta}, got {causal_effect}"
+        )
+        assert torch.allclose(
+            causal_effect_var, expected_causal_effect_var, atol=1e-5
+        ), f"Causal effect variance should be 0, got {causal_effect_var}"
+
     def test_posterior_stats_observe_x_and_y(
         self, sem: SEM, values: dict[str, Tensor]
     ) -> None:

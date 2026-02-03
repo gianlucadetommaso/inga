@@ -2,11 +2,13 @@
 
 from torch import Tensor
 import torch
+
 from steindag.variable.base import Variable
 from steindag.approx_posterior.laplace import LaplacePosterior
+from steindag.sem.causal_effect import CausalEffectMixin
 
 
-class SEM:
+class SEM(CausalEffectMixin):
     """A Structural Equation Model (SEM).
 
     A SEM defines a collection of variables with causal relationships.
@@ -14,6 +16,7 @@ class SEM:
 
     Attributes:
         _variables: Dictionary mapping variable names to Variable objects.
+        posterior: Laplace approximate posterior for inference.
     """
 
     def __init__(self, variables: list[Variable]) -> None:

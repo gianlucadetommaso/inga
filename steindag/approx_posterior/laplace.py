@@ -310,7 +310,7 @@ class LaplacePosterior:
             else:
                 values[name] = variable.f(parents, u_latent[name])
 
-        raise ValueError(f"Observed variable '{observed_name}' not found in SEM")
+        raise ValueError(f"Observed variable '{observed_name}' not found in the SEM.")
 
     def _ravel(self, u_latent: dict[str, Tensor]) -> Tensor:
         """Convert a dictionary of latent variables to a stacked tensor.
