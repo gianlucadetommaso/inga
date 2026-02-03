@@ -73,7 +73,7 @@ class SEM:
         size = len(list(observed.values())[0])
         u_latent = nn.ParameterDict({name: torch.randn(size) for name in self._variables if name not in observed})
         
-        optimizer = torch.optim.LBFGS(u_latent.values(), lr=0.01, max_iter=100)
+        optimizer = torch.optim.LBFGS(u_latent.values(), lr=1, max_iter=100)
         
         size = len(list(observed.values())[0])
         
@@ -157,7 +157,13 @@ sem = SEM(
     ]
 )
 
+alpha = sem._variables["X"]._coefs["Z"]
+beta = sem._variables["Y"]._coefs["X"]
+gamma = sem._variables["Y"]._coefs["Z"]
+
 values = sem.generate(10)
+
+# observe only X
 observed = {"X": values["X"]}
 
 maps = sem.fit_map(observed)
@@ -165,4 +171,26 @@ chols_cov = sem.approx_cov_chol(maps, observed)
 maps_rav = sem._ravel(maps)
 
 samples = sem.sample(maps_rav, chols_cov, 10000, sem._get_latent_names(maps))
-print()
+
+posterior_means = alpha * observed["X"] / (1 + alpha ** 2)
+posterior_vars = Tensor([1 / (1 + alpha ** 2)]).expand(10)
+
+print(torch.abs(posterior_means - samples["Z"].mean(1)))
+print(torch.abs(posterior_vars - samples["Z"].var(1)))
+
+# observe X and Y
+observed = {"X": values["X"], "Y": values["Y"]}
+
+maps = sem.fit_map(observed)
+chols_cov = sem.approx_cov_chol(maps, observed)
+maps_rav = sem._ravel(maps)
+
+samples = sem.sample(maps_rav, chols_cov, 10000, sem._get_latent_names(maps))
+
+posterior_means = (gamma * (observed["Y"] - beta * observed["X"]) + alpha * observed["X"]) / (1 + alpha ** 2 + gamma ** 2)
+posterior_vars = Tensor([1 / (1 + alpha ** 2 + gamma ** 2)]).expand(10)
+
+print(torch.abs(posterior_means - samples["Z"].mean(1)))
+print(torch.abs(posterior_vars - samples["Z"].var(1)))
+
+
