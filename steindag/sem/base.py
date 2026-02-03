@@ -1,41 +1,10 @@
 from torch import Tensor, nn, vmap, no_grad
 from torch.func import grad
 import torch
-from abc import abstractmethod
-from typing import Iterable
 from functools import partial
+from steindag.variable.base import Variable
 
 
-class Variable:
-    def __init__(self, name: str, parent_names: Iterable[str], sigma: float) -> None:
-        self.name = name
-        self.parent_names = parent_names
-        self.sigma = sigma
-    
-    def f(self, parents: dict[str, Tensor], u: Tensor, f_bar: Tensor | None = None) -> Tensor:
-        if f_bar is None:
-            f_bar = self.f_bar(parents)
-        return f_bar + self.sigma * u
-    
-    @abstractmethod
-    def f_bar(self, parents: dict[str, Tensor]) -> Tensor: ...
-    
-
-class LinearVariable(Variable):
-    def __init__(self, name: str, parent_names: Iterable[str], sigma: float, coefs: dict[str, float], intercept: float) -> None:
-        super().__init__(name, parent_names, sigma)
-        
-        self._coefs = coefs
-        self._intercept = intercept
-        
-    def f_bar(self, parents: dict[str, Tensor]) -> Tensor:
-        f_bar = self._intercept
-        for parent_name, parent in parents.items():
-            f_bar += self._coefs[parent_name] * parent
-            
-        return f_bar
-            
-    
 class SEM:
     def __init__(self, variables: list[Variable]) -> None:
         self._variables = {variable.name: variable for variable in variables}
@@ -118,8 +87,8 @@ class SEM:
         return L
     
     @no_grad
-    def sample(self, map_rav: Tensor, chol_cov: Tensor, num_samples: int, latent_names: list[str]) -> dict[str, Tensor]:
-        samples_rav = map_rav.unsqueeze(-1) + torch.sum(chol_cov.unsqueeze(-1) * torch.randn(size=(len(maps_rav), 1, maps_rav.shape[1], num_samples)), dim=1)
+    def sample(self, maps_rav: Tensor, chol_cov: Tensor, num_samples: int, latent_names: list[str]) -> dict[str, Tensor]:
+        samples_rav = maps_rav.unsqueeze(-1) + torch.sum(chol_cov.unsqueeze(-1) * torch.randn(size=(len(maps_rav), 1, maps_rav.shape[1], num_samples)), dim=1)
         return vmap(lambda s: self._unravel(s, latent_names), in_dims=2, out_dims=1)(samples_rav)
         
     def _get_latent_names(self, u_latent: dict[str, Tensor]) -> Tensor:
@@ -147,50 +116,3 @@ class SEM:
                 
     def _unravel(self, u_latent_rav: Tensor, latent_names: list[str]) -> dict[str, Tensor]:
         return {name: u_latent_rav.select(dim=-1, index=i) for i, name in enumerate(latent_names)}
-                
-        
-sem = SEM(
-    variables=[
-        LinearVariable(name="Z", parent_names=[], sigma=1., coefs={}, intercept=0.),
-        LinearVariable(name="X", parent_names=["Z"], sigma=1., coefs={"Z": 1.}, intercept=0.),
-        LinearVariable(name="Y", parent_names=["X", "Z"], sigma=1., coefs={"X": 2., "Z": 3.}, intercept=0.)
-    ]
-)
-
-alpha = sem._variables["X"]._coefs["Z"]
-beta = sem._variables["Y"]._coefs["X"]
-gamma = sem._variables["Y"]._coefs["Z"]
-
-values = sem.generate(10)
-
-# observe only X
-observed = {"X": values["X"]}
-
-maps = sem.fit_map(observed)
-chols_cov = sem.approx_cov_chol(maps, observed)
-maps_rav = sem._ravel(maps)
-
-samples = sem.sample(maps_rav, chols_cov, 10000, sem._get_latent_names(maps))
-
-posterior_means = alpha * observed["X"] / (1 + alpha ** 2)
-posterior_vars = Tensor([1 / (1 + alpha ** 2)]).expand(10)
-
-print(torch.abs(posterior_means - samples["Z"].mean(1)))
-print(torch.abs(posterior_vars - samples["Z"].var(1)))
-
-# observe X and Y
-observed = {"X": values["X"], "Y": values["Y"]}
-
-maps = sem.fit_map(observed)
-chols_cov = sem.approx_cov_chol(maps, observed)
-maps_rav = sem._ravel(maps)
-
-samples = sem.sample(maps_rav, chols_cov, 10000, sem._get_latent_names(maps))
-
-posterior_means = (gamma * (observed["Y"] - beta * observed["X"]) + alpha * observed["X"]) / (1 + alpha ** 2 + gamma ** 2)
-posterior_vars = Tensor([1 / (1 + alpha ** 2 + gamma ** 2)]).expand(10)
-
-print(torch.abs(posterior_means - samples["Z"].mean(1)))
-print(torch.abs(posterior_vars - samples["Z"].var(1)))
-
-
