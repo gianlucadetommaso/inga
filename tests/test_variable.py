@@ -225,7 +225,9 @@ class TestLinearVariable:
 
     def test_raises_when_coefs_and_parent_names_mismatch(self) -> None:
         """Test that ValueError is raised when coefs keys don't match parent_names."""
-        with pytest.raises(ValueError, match="Coefficient keys must match parent_names"):
+        with pytest.raises(
+            ValueError, match="Coefficient keys must match parent_names"
+        ):
             LinearVariable(
                 name="X",
                 sigma=1.0,
