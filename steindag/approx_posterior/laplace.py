@@ -183,13 +183,13 @@ class LaplacePosterior:
 
             if name in observed:
                 values[name] = observed[name]
-                u = observed[name] - f_bar
+                u = (observed[name] - f_bar) / variable.sigma
 
             else:
                 values[name] = variable.f(parents, u_latent[name], f_bar)
                 u = u_latent[name]
 
-            loss = loss + 0.5 * torch.sum((u / variable.sigma) ** 2)
+            loss = loss + 0.5 * torch.sum(u ** 2)
 
         return loss  # type: ignore[return-value]
 

@@ -129,6 +129,7 @@ class CausalEffectMixin:
             raise ValueError("`treatment_name` and `observed_name` cannot be equal.")
 
         u_latent_samples = self.posterior.sample(num_samples)
+        pruned_observed = {name: values for name, values in observed.items() if not self._is_on_causal_path(name, treatment_name, outcome_name)}
 
         @partial(vmap, in_dims=1, out_dims=1)
         def f_bar_outcome_per_sample(u_latent_sample: dict[str, Tensor]) -> Tensor:
@@ -151,7 +152,7 @@ class CausalEffectMixin:
 
                 return grad(f_bar_outcome)(single_observed[treatment_name])
 
-            return f_bar_outcome_per_observation(u_latent_sample, observed)
+            return f_bar_outcome_per_observation(u_latent_sample, pruned_observed)
 
         return f_bar_outcome_per_sample(u_latent_samples)
 
@@ -196,3 +197,90 @@ class CausalEffectMixin:
                 values[name] = variable.f(parents, u_latent[name])
 
         raise ValueError(f"Outcome variable '{outcome_name}' not found in the SEM.")
+
+    def _is_on_causal_path(
+        self,
+        variable_name: str,
+        treatment_name: str,
+        outcome_name: str,
+    ) -> bool:
+        """Check if a variable is on a causal path from treatment to outcome.
+
+        A variable is on a causal path if it is a proper descendant of the
+        treatment and an ancestor of the outcome (or the outcome itself).
+        The treatment itself is not considered to be on the causal path.
+
+        Args:
+            variable_name: Name of the variable to check.
+            treatment_name: Name of the treatment variable.
+            outcome_name: Name of the outcome variable.
+
+        Returns:
+            True if the variable is on a causal path from treatment to outcome,
+            False otherwise. Returns False if variable_name equals treatment_name.
+
+        Raises:
+            ValueError: If any of the variable names are not in the SEM.
+        """
+        for name in [variable_name, treatment_name, outcome_name]:
+            if name not in self._variables:
+                raise ValueError(f"Variable '{name}' not found in the SEM.")
+
+        # Treatment itself is not on the causal path
+        if variable_name == treatment_name:
+            return False
+
+        # A variable is on a causal path if:
+        # 1. It is a descendant of the treatment
+        # 2. The outcome is reachable from it (is outcome or ancestor of outcome)
+
+        descendants_of_treatment = self._get_descendants(treatment_name)
+
+        ancestors_of_outcome = self._get_ancestors(outcome_name)
+        ancestors_of_outcome.add(outcome_name)
+
+        return (
+            variable_name in descendants_of_treatment
+            and variable_name in ancestors_of_outcome
+        )
+
+    def _get_descendants(self, variable_name: str) -> set[str]:
+        """Get all descendants of a variable in the DAG.
+
+        Args:
+            variable_name: Name of the variable.
+
+        Returns:
+            Set of names of all descendant variables.
+        """
+        descendants: set[str] = set()
+        to_visit = [variable_name]
+
+        while to_visit:
+            current = to_visit.pop()
+            for name, variable in self._variables.items():
+                if current in variable.parent_names and name not in descendants:
+                    descendants.add(name)
+                    to_visit.append(name)
+
+        return descendants
+
+    def _get_ancestors(self, variable_name: str) -> set[str]:
+        """Get all ancestors of a variable in the DAG.
+
+        Args:
+            variable_name: Name of the variable.
+
+        Returns:
+            Set of names of all ancestor variables.
+        """
+        ancestors: set[str] = set()
+        to_visit = list(self._variables[variable_name].parent_names)
+
+        while to_visit:
+            current = to_visit.pop()
+            if current not in ancestors:
+                ancestors.add(current)
+                to_visit.extend(self._variables[current].parent_names)
+
+        return ancestors
