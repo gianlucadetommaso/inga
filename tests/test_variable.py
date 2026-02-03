@@ -1,7 +1,40 @@
 """Tests for Variable and LinearVariable classes."""
 
+import pytest
 import torch
+from steindag.variable.base import Variable
 from steindag.variable.linear import LinearVariable
+
+
+class ConcreteVariable(Variable):
+    """Concrete implementation of Variable for testing."""
+
+    def f_bar(self, parents: dict[str, torch.Tensor]) -> torch.Tensor:
+        """Return zero tensor for testing."""
+        return torch.tensor(0.0)
+
+
+class TestVariable:
+    """Tests for base Variable class."""
+
+    def test_parent_names_defaults_to_empty_list(self) -> None:
+        """Test that parent_names defaults to empty list when not provided."""
+        var = ConcreteVariable(name="X", sigma=1.0)
+
+        assert var.parent_names == []
+
+    def test_parent_names_none_becomes_empty_list(self) -> None:
+        """Test that parent_names=None becomes empty list."""
+        var = ConcreteVariable(name="X", sigma=1.0, parent_names=None)
+
+        assert var.parent_names == []
+
+    def test_parent_names_converted_to_list(self) -> None:
+        """Test that parent_names iterable is converted to list."""
+        var = ConcreteVariable(name="X", sigma=1.0, parent_names=("A", "B"))
+
+        assert var.parent_names == ["A", "B"]
+        assert isinstance(var.parent_names, list)
 
 
 class TestLinearVariable:
@@ -149,3 +182,53 @@ class TestLinearVariable:
 
         expected = torch.tensor([5.0, 5.0, 5.0])
         assert torch.allclose(result, expected)
+
+    def test_parent_names_inferred_from_coefs(self) -> None:
+        """Test that parent_names is inferred from coefs keys when not provided."""
+        var = LinearVariable(
+            name="X",
+            sigma=1.0,
+            coefs={"A": 1.0, "B": 2.0},
+        )
+
+        assert set(var.parent_names) == {"A", "B"}
+
+    def test_parent_names_defaults_to_empty_when_no_coefs(self) -> None:
+        """Test that parent_names defaults to empty list when coefs not provided."""
+        var = LinearVariable(
+            name="X",
+            sigma=1.0,
+        )
+
+        assert var.parent_names == []
+        assert var._coefs == {}
+
+    def test_raises_when_coefs_missing_parent(self) -> None:
+        """Test that ValueError is raised when coefs is missing a parent."""
+        with pytest.raises(ValueError, match="missing coefficients for"):
+            LinearVariable(
+                name="X",
+                sigma=1.0,
+                parent_names=["A", "B"],
+                coefs={"A": 1.0},  # Missing "B"
+            )
+
+    def test_raises_when_coefs_has_extra_key(self) -> None:
+        """Test that ValueError is raised when coefs has extra keys."""
+        with pytest.raises(ValueError, match="extra coefficients for"):
+            LinearVariable(
+                name="X",
+                sigma=1.0,
+                parent_names=["A"],
+                coefs={"A": 1.0, "B": 2.0},  # Extra "B"
+            )
+
+    def test_raises_when_coefs_and_parent_names_mismatch(self) -> None:
+        """Test that ValueError is raised when coefs keys don't match parent_names."""
+        with pytest.raises(ValueError, match="Coefficient keys must match parent_names"):
+            LinearVariable(
+                name="X",
+                sigma=1.0,
+                parent_names=["A", "B"],
+                coefs={"A": 1.0, "C": 2.0},  # "C" instead of "B"
+            )

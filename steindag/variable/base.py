@@ -17,16 +17,18 @@ class Variable:
         sigma: Standard deviation of the additive noise term.
     """
 
-    def __init__(self, name: str, parent_names: Iterable[str], sigma: float) -> None:
+    def __init__(
+        self, name: str, sigma: float, parent_names: Iterable[str] | None = None
+    ) -> None:
         """Initialize a variable.
 
         Args:
             name: The variable's identifier.
-            parent_names: Names of parent variables in the DAG.
             sigma: Standard deviation of the additive noise term.
+            parent_names: Names of parent variables in the DAG. Defaults to empty list.
         """
         self.name = name
-        self.parent_names = parent_names
+        self.parent_names = list(parent_names) if parent_names is not None else []
         self.sigma = sigma
 
     def f(
