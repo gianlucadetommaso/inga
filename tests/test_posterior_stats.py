@@ -1,6 +1,6 @@
 """Tests for posterior statistics of the SEM.
 
-These tests verify that the approximate posterior inference produces
+These tests verify that the Laplace approximate posterior inference produces
 correct mean and variance estimates by comparing against analytically
 derived ground truth for a simple linear SEM.
 """
@@ -72,7 +72,7 @@ def _get_coef(sem: SEM, var_name: str, parent_name: str) -> float:
 
 
 class TestPosteriorStats:
-    """Tests for posterior mean and variance accuracy."""
+    """Tests for posterior mean and variance accuracy using Laplace approximation."""
 
     def test_posterior_stats_observe_x_only(
         self, sem: SEM, values: dict[str, Tensor]
@@ -88,12 +88,10 @@ class TestPosteriorStats:
 
         observed: dict[str, Tensor] = {"X": values["X"]}
 
-        maps = sem.fit_map(observed)
-        chols_cov = sem.approx_cov_chol(maps, observed)
-        maps_rav = sem._ravel(maps)
+        sem.posterior.fit(observed)
 
         torch.manual_seed(0)
-        samples = sem.sample(maps_rav, chols_cov, 10000, sem._get_latent_names(maps))
+        samples = sem.posterior.sample(10000)
 
         expected_means: Tensor = alpha * observed["X"] / (1 + alpha**2)
         expected_vars: Tensor = Tensor([1 / (1 + alpha**2)]).expand(10)
@@ -124,12 +122,10 @@ class TestPosteriorStats:
 
         observed: dict[str, Tensor] = {"X": values["X"], "Y": values["Y"]}
 
-        maps = sem.fit_map(observed)
-        chols_cov = sem.approx_cov_chol(maps, observed)
-        maps_rav = sem._ravel(maps)
+        sem.posterior.fit(observed)
 
         torch.manual_seed(0)
-        samples = sem.sample(maps_rav, chols_cov, 10000, sem._get_latent_names(maps))
+        samples = sem.posterior.sample(10000)
 
         expected_means: Tensor = (
             gamma * (observed["Y"] - beta * observed["X"]) + alpha * observed["X"]

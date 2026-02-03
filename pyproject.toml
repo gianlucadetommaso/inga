@@ -17,7 +17,7 @@ dev = [
 ]
 
 [project.scripts]
-check = "steindag._scripts:check"
+dev = "steindag._scripts:dev"
 
 [build-system]
 requires = ["hatchling"]
