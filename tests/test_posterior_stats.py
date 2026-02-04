@@ -111,7 +111,7 @@ class TestPosteriorStats:
 
 class TestCausalBiasComponents:
     """Tests for individual components of the causal bias formula for linear confounder case.
-    
+
     For the linear model Z -> X -> Y with Z -> Y (confounder), when only X is observed:
     - du_fy = 0 (dY/du_X = 0 because Y depends on X, not u_X directly)
     - dx_diff = -1 (for treatment variable)
@@ -182,10 +182,11 @@ class TestCausalBiasComponents:
                 u_latent = {k: v[i, j] for k, v in u_latent_samples.items()}
                 obs = {k: v[i] for k, v in observed.items()}
                 mid_term = sem._mid_term(
-                    u_latent, obs,
+                    u_latent,
+                    obs,
                     outcome_mean=outcome_means[i],
                     observed_name="X",
-                    outcome_name="Y"
+                    outcome_name="Y",
                 )
                 sample_mid_terms.append(mid_term)
             mid_terms.append(torch.stack(sample_mid_terms).mean())
@@ -193,7 +194,9 @@ class TestCausalBiasComponents:
         mean_mid_term = torch.stack(mid_terms).mean()
         expected_mid_term = gamma * alpha / (1 + alpha**2)
 
-        assert torch.allclose(mean_mid_term, torch.tensor(expected_mid_term), atol=0.1), (
+        assert torch.allclose(
+            mean_mid_term, torch.tensor(expected_mid_term), atol=0.1
+        ), (
             f"mid_term mean should equal gamma*alpha/(1+alpha^2)={expected_mid_term}, got {mean_mid_term}"
         )
 
@@ -253,7 +256,9 @@ class TestCausalBiasComponents:
 
         causal_bias = sem.causal_bias(observed, treatment_name="X", outcome_name="Y")
 
-        expected_causal_bias = torch.full_like(causal_bias, gamma * alpha / (1 + alpha**2))
+        expected_causal_bias = torch.full_like(
+            causal_bias, gamma * alpha / (1 + alpha**2)
+        )
 
         assert torch.allclose(causal_bias, expected_causal_bias, atol=0.2), (
             f"Causal bias should equal gamma*alpha/(1+alpha^2)={gamma * alpha / (1 + alpha**2)}, got {causal_bias}"
@@ -322,7 +327,11 @@ class TestOvercontrolModel:
                     name="X", parent_names=[], sigma=1.0, coefs={}, intercept=0.0
                 ),
                 LinearVariable(
-                    name="V", parent_names=["X"], sigma=1.0, coefs={"X": 1.0}, intercept=0.0
+                    name="V",
+                    parent_names=["X"],
+                    sigma=1.0,
+                    coefs={"X": 1.0},
+                    intercept=0.0,
                 ),
                 LinearVariable(
                     name="Y",
@@ -432,7 +441,11 @@ class TestEndogenousSelectionModel:
                     name="X", parent_names=[], sigma=1.0, coefs={}, intercept=0.0
                 ),
                 LinearVariable(
-                    name="Y", parent_names=["X"], sigma=1.0, coefs={"X": 1.0}, intercept=0.0
+                    name="Y",
+                    parent_names=["X"],
+                    sigma=1.0,
+                    coefs={"X": 1.0},
+                    intercept=0.0,
                 ),
                 LinearVariable(
                     name="V",
@@ -445,7 +458,9 @@ class TestEndogenousSelectionModel:
         )
 
     @pytest.fixture
-    def endogenous_selection_values(self, endogenous_selection_sem: SEM) -> dict[str, Tensor]:
+    def endogenous_selection_values(
+        self, endogenous_selection_sem: SEM
+    ) -> dict[str, Tensor]:
         """Generate sample values from the endogenous selection SEM.
 
         Args:
@@ -458,7 +473,9 @@ class TestEndogenousSelectionModel:
         return endogenous_selection_sem.generate(10)
 
     def test_causal_effect_endogenous_selection(
-        self, endogenous_selection_sem: SEM, endogenous_selection_values: dict[str, Tensor]
+        self,
+        endogenous_selection_sem: SEM,
+        endogenous_selection_values: dict[str, Tensor],
     ) -> None:
         """Test that causal effect of X on Y equals alpha when observing X and V.
 
@@ -485,7 +502,9 @@ class TestEndogenousSelectionModel:
         )
 
     def test_causal_bias_endogenous_selection(
-        self, endogenous_selection_sem: SEM, endogenous_selection_values: dict[str, Tensor]
+        self,
+        endogenous_selection_sem: SEM,
+        endogenous_selection_values: dict[str, Tensor],
     ) -> None:
         """Test causal bias of X on Y when observing X and V in endogenous selection model.
 
@@ -513,4 +532,221 @@ class TestEndogenousSelectionModel:
 
         assert torch.allclose(causal_bias, expected_causal_bias, atol=0.2), (
             f"Causal bias should equal -(gamma*(beta+gamma*alpha))/(1+gamma^2)={-(gamma * (beta + gamma * alpha)) / (1 + gamma**2)}, got {causal_bias}"
+        )
+
+    def test_contribution_observing_x_is_null(
+        self,
+        endogenous_selection_sem: SEM,
+        endogenous_selection_values: dict[str, Tensor],
+    ) -> None:
+        """Test that the mean contribution when observing X is null.
+
+        For the endogenous selection model X -> Y, X -> V, Y -> V,
+        when we observe X, its mean contribution to causal bias should be zero
+        because X is the treatment variable and there is no confounding path through X.
+
+        The contribution from X is: -(du_fy + mid_term) * dx_diff / sigma_X
+        - dx_diff = -1 (for treatment variable)
+        - du_fy = 0 (dY/du_X = 0 because Y = alpha*X + U_Y depends on X, not u_X)
+        - E[mid_term] = 0 (centered Y has zero correlation with u_X)
+        """
+        observed: dict[str, Tensor] = {
+            "X": endogenous_selection_values["X"],
+            "V": endogenous_selection_values["V"],
+        }
+
+        endogenous_selection_sem.posterior.fit(observed)
+
+        torch.manual_seed(0)
+        u_latent_samples = endogenous_selection_sem.posterior.sample(10000)
+
+        # Test du_fy = 0 for a single sample
+        u_latent = {k: v[0, 0] for k, v in u_latent_samples.items()}
+        obs = {k: v[0] for k, v in observed.items()}
+
+        u_x = endogenous_selection_sem._get_u_observed(u_latent, obs, "X")
+        fy_bar_u = partial(
+            endogenous_selection_sem._fy_bar_u,
+            u_latent=u_latent,
+            observed=obs,
+            input_name="X",
+            treatment_name="X",
+            outcome_name="Y",
+        )
+        du_fy = grad(fy_bar_u)(u_x)
+
+        assert torch.allclose(du_fy, torch.tensor(0.0), atol=1e-5), (
+            f"du_fy should be 0 when observing X, got {du_fy}"
+        )
+
+        # Test mean of mid_term = 0 (centered Y has zero mean correlation with u_X)
+        outcome_means = endogenous_selection_sem._cond_mean_outcome(
+            u_latent_samples, observed, outcome_name="Y"
+        )
+
+        # Compute mid_term for each sample and observation, then average
+        mid_terms = []
+        num_obs = observed["X"].shape[0]
+        num_samples = 10000
+
+        for i in range(num_obs):
+            sample_mid_terms = []
+            for j in range(num_samples):
+                u_latent = {k: v[i, j] for k, v in u_latent_samples.items()}
+                obs = {k: v[i] for k, v in observed.items()}
+                mid_term = endogenous_selection_sem._mid_term(
+                    u_latent,
+                    obs,
+                    outcome_mean=outcome_means[i],
+                    observed_name="X",
+                    outcome_name="Y",
+                )
+                sample_mid_terms.append(mid_term)
+            mid_terms.append(torch.stack(sample_mid_terms).mean())
+
+        mean_mid_term = torch.stack(mid_terms).mean()
+
+        assert torch.allclose(mean_mid_term, torch.tensor(0.0), atol=0.1), (
+            f"mean mid_term should be 0 when observing X, got {mean_mid_term}"
+        )
+
+    def test_dx_diff_observing_v(
+        self,
+        endogenous_selection_sem: SEM,
+        endogenous_selection_values: dict[str, Tensor],
+    ) -> None:
+        """Test that dx_diff = beta + gamma*alpha when observing V.
+
+        For the endogenous selection model:
+        - V = beta*X + gamma*Y + U_V
+        - Y = alpha*X + U_Y
+
+        The derivative dV/dX = beta + gamma * dY/dX = beta + gamma * alpha.
+        """
+        alpha = _get_coef(endogenous_selection_sem, "Y", "X")
+        beta = _get_coef(endogenous_selection_sem, "V", "X")
+        gamma = _get_coef(endogenous_selection_sem, "V", "Y")
+
+        observed: dict[str, Tensor] = {
+            "X": endogenous_selection_values["X"][:1],
+            "V": endogenous_selection_values["V"][:1],
+        }
+
+        endogenous_selection_sem.posterior.fit(observed)
+
+        torch.manual_seed(0)
+        u_latent_samples = endogenous_selection_sem.posterior.sample(1)
+        u_latent = {k: v[0, 0] for k, v in u_latent_samples.items()}
+        obs = {k: v[0] for k, v in observed.items()}
+
+        fv_bar_x = partial(
+            endogenous_selection_sem._fv_bar_x,
+            u_latent=u_latent,
+            observed=obs,
+            treatment_name="X",
+            target_name="V",
+        )
+        dx_diff = grad(fv_bar_x)(obs["X"])
+
+        expected_dx_diff = beta + gamma * alpha
+
+        assert torch.allclose(dx_diff, torch.tensor(expected_dx_diff), atol=1e-5), (
+            f"dx_diff should equal beta + gamma*alpha = {expected_dx_diff}, got {dx_diff}"
+        )
+
+    def test_du_fy_observing_v_is_zero(
+        self,
+        endogenous_selection_sem: SEM,
+        endogenous_selection_values: dict[str, Tensor],
+    ) -> None:
+        """Test that du_fy = 0 when observing V.
+
+        For the endogenous selection model, the derivative dY/du_V should be 0
+        because Y = alpha*X + U_Y does not depend on V or u_V.
+        """
+        observed: dict[str, Tensor] = {
+            "X": endogenous_selection_values["X"][:1],
+            "V": endogenous_selection_values["V"][:1],
+        }
+
+        endogenous_selection_sem.posterior.fit(observed)
+
+        torch.manual_seed(0)
+        u_latent_samples = endogenous_selection_sem.posterior.sample(1)
+        u_latent = {k: v[0, 0] for k, v in u_latent_samples.items()}
+        obs = {k: v[0] for k, v in observed.items()}
+
+        u_v = endogenous_selection_sem._get_u_observed(u_latent, obs, "V")
+
+        fy_bar_u = partial(
+            endogenous_selection_sem._fy_bar_u,
+            u_latent=u_latent,
+            observed=obs,
+            input_name="V",
+            treatment_name="X",
+            outcome_name="Y",
+        )
+        du_fy = grad(fy_bar_u)(u_v)
+
+        assert torch.allclose(du_fy, torch.tensor(0.0), atol=1e-5), (
+            f"du_fy should be 0 when observing V, got {du_fy}"
+        )
+
+    def test_mid_term_observing_v(
+        self,
+        endogenous_selection_sem: SEM,
+        endogenous_selection_values: dict[str, Tensor],
+    ) -> None:
+        """Test that mean of mid_term = gamma/(1+gamma^2) when observing V.
+
+        For the endogenous selection model, the mid_term captures the collider bias
+        contribution through V. Its expected value should equal gamma / (1 + gamma^2).
+
+        The mid_term formula is: -(Y_sample - Y_mean) * u_V
+        where u_V = V - f_bar_V is the normalized residual of V.
+
+        For the linear case, E[mid_term] = gamma * Var[u_Y | X, V] = gamma / (1 + gamma^2).
+        """
+        gamma = _get_coef(endogenous_selection_sem, "V", "Y")
+
+        observed: dict[str, Tensor] = {
+            "X": endogenous_selection_values["X"],
+            "V": endogenous_selection_values["V"],
+        }
+
+        endogenous_selection_sem.posterior.fit(observed)
+
+        torch.manual_seed(0)
+        u_latent_samples = endogenous_selection_sem.posterior.sample(10000)
+        outcome_means = endogenous_selection_sem._cond_mean_outcome(
+            u_latent_samples, observed, outcome_name="Y"
+        )
+
+        # Compute mid_term for each sample and observation, then average
+        mid_terms = []
+        num_obs = observed["X"].shape[0]
+        num_samples = 10000
+
+        for i in range(num_obs):
+            sample_mid_terms = []
+            for j in range(num_samples):
+                u_latent = {k: v[i, j] for k, v in u_latent_samples.items()}
+                obs = {k: v[i] for k, v in observed.items()}
+                mid_term = endogenous_selection_sem._mid_term(
+                    u_latent,
+                    obs,
+                    outcome_mean=outcome_means[i],
+                    observed_name="V",
+                    outcome_name="Y",
+                )
+                sample_mid_terms.append(mid_term)
+            mid_terms.append(torch.stack(sample_mid_terms).mean())
+
+        mean_mid_term = torch.stack(mid_terms).mean()
+        expected_mid_term = gamma / (1 + gamma**2)
+
+        assert torch.allclose(
+            mean_mid_term, torch.tensor(expected_mid_term), atol=0.1
+        ), (
+            f"mid_term mean should equal gamma/(1+gamma^2)={expected_mid_term}, got {mean_mid_term}"
         )

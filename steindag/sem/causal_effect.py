@@ -1,6 +1,5 @@
 """Causal effect computation mixin for Structural Equation Models."""
 
-import torch
 from torch import Tensor, vmap, no_grad
 from torch.func import grad
 from functools import partial
@@ -130,7 +129,11 @@ class CausalEffectMixin:
             raise ValueError("`treatment_name` and `observed_name` cannot be equal.")
 
         u_latent_samples = self.posterior.sample(num_samples)
-        mediator_names = {name for name in observed if self._is_on_causal_path(name, treatment_name, outcome_name)}
+        mediator_names = {
+            name
+            for name in observed
+            if self._is_on_causal_path(name, treatment_name, outcome_name)
+        }
 
         @partial(vmap, in_dims=1, out_dims=0)
         def f_bar_outcome_per_sample(u_latent_sample: dict[str, Tensor]) -> Tensor:

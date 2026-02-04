@@ -189,7 +189,7 @@ class LaplacePosterior:
                 values[name] = variable.f(parents, u_latent[name], f_bar)
                 u = u_latent[name]
 
-            loss = loss + 0.5 * torch.sum(u ** 2)
+            loss = loss + 0.5 * torch.sum(u**2)
 
         return loss  # type: ignore[return-value]
 
