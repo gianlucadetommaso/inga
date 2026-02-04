@@ -64,7 +64,7 @@ class CausalBiasMixin:
 
         for observed_name in observed:
             
-            @partial(vmap, in_dims=1, out_dims=1)
+            @partial(vmap, in_dims=1, out_dims=0)
             def causal_bias_contrib_sample(u_latent_sample: dict[str, Tensor]) -> Tensor:
                 @vmap
                 def causal_bias_contrib_sample_per_observation(
@@ -73,7 +73,7 @@ class CausalBiasMixin:
                     outcome_mean: Tensor
                 ) -> Tensor:
                     if observed_name == treatment_name:
-                        dx_diff = -torch.zeros_like(observed_per_observation[treatment_name])
+                        dx_diff = -torch.ones_like(observed_per_observation[treatment_name])
                     else:
                         fv_bar_x = partial(
                             self._fv_bar_x,
@@ -89,9 +89,10 @@ class CausalBiasMixin:
                         u_latent=u_latent_per_observation,
                         observed=observed_per_observation,
                         input_name=observed_name,
+                        treatment_name=treatment_name,
                         outcome_name=outcome_name,
                     )
-                    inpt = self._get_u_observed(u_latent_per_observation, observed_per_observation)
+                    inpt = self._get_u_observed(u_latent_per_observation, observed_per_observation, observed_name)
                     du_fy = grad(fy_bar_u)(inpt)
                     
                     mid_term = self._mid_term(u_latent_per_observation, observed_per_observation, outcome_mean=outcome_mean, observed_name=observed_name, outcome_name=outcome_name)
@@ -100,7 +101,7 @@ class CausalBiasMixin:
 
                 return causal_bias_contrib_sample_per_observation(u_latent_sample, observed, outcome_means)
 
-            causal_bias += causal_bias_contrib_sample(u_latent_samples)
+            causal_bias += causal_bias_contrib_sample(u_latent_samples).T
             
         return causal_bias
 
@@ -136,6 +137,7 @@ class CausalBiasMixin:
         u_latent: dict[str, Tensor],
         observed: dict[str, Tensor],
         input_name: Tensor,
+        treatment_name: str,
         outcome_name: str,
     ) -> Tensor:
         values: dict[str, Tensor] = {}
@@ -149,13 +151,15 @@ class CausalBiasMixin:
             if name == outcome_name:
                 return self._variables[name].f_bar(parents)
             
-            if name == input_name:
+            if name == treatment_name:
+                values[name] = observed[treatment_name]
+            elif name == input_name:
                 values[name] = variable.f(parents, inpt)
             elif name in u_latent:
                 values[name] = variable.f(parents, u_latent[name])
             else:
                 f_bar = variable.f_bar(parents)
-                values[name] = variable.f(parents, torch.no_grad((observed[name] -  f_bar) / variable.sigma), f_bar=f_bar)
+                values[name] = variable.f(parents, ((observed[name] -  f_bar) / variable.sigma).detach(), f_bar=f_bar)
 
         raise ValueError(f"Outcome variable '{outcome_name}' not found in the SEM.")
 
@@ -208,7 +212,7 @@ class CausalBiasMixin:
         raise ValueError(f"Observed variable '{observed_name}' not found in the SEM.")
     
     def _cond_mean_outcome(self, u_latent_samples: dict[str, Tensor], observed: dict[str, Tensor], outcome_name: str) -> dict[str, Tensor]:
-        @partial(vmap, in_dims=1, out_dims=1)
+        @partial(vmap, in_dims=1, out_dims=0)
         def cond_mean_outcome_per_sample(u_latent_sample: dict[str, Tensor]) -> Tensor:
             @vmap
             def cond_mean_outcome_per_observation(
@@ -235,23 +239,27 @@ class CausalBiasMixin:
             
             return cond_mean_outcome_per_observation(u_latent_sample, observed)
         
-        return cond_mean_outcome_per_sample(u_latent_samples).mean(1)
+        return cond_mean_outcome_per_sample(u_latent_samples).T.mean(1)
     
     
     def _mid_term(self, u_latent: dict[str, Tensor], observed: dict[str, Tensor], outcome_mean: Tensor, observed_name: str, outcome_name: str) -> dict[str, Tensor]:
         values: dict[str, Tensor] = {}
+        u_observed: Tensor | None = None
         
         for name, variable in self._variables.items():
             parents = {
                 parent_name: values[parent_name]
                 for parent_name in variable.parent_names
             }
-                
-            if name == outcome_name:
-                return -(variable.f(parents, u_latent[name]) - outcome_mean) * u_latent[observed_name]
-
+            
             if name in observed:
+                f_bar = variable.f_bar(parents)
+                if name == observed_name:
+                    u_observed = (observed[name] - f_bar) / variable.sigma
                 values[name] = observed[name]
+            elif name == outcome_name:
+                assert u_observed is not None, f"Observed variable '{observed_name}' not found before outcome."
+                return -(variable.f(parents, u_latent[name]) - outcome_mean) * u_observed
             else:
                 values[name] = variable.f(parents, u_latent[name])
 

@@ -6,9 +6,10 @@ import torch
 from steindag.variable.base import Variable
 from steindag.approx_posterior.laplace import LaplacePosterior
 from steindag.sem.causal_effect import CausalEffectMixin
+from steindag.sem.causal_bias import CausalBiasMixin
 
 
-class SEM(CausalEffectMixin):
+class SEM(CausalEffectMixin, CausalBiasMixin):
     """A Structural Equation Model (SEM).
 
     A SEM defines a collection of variables with causal relationships.

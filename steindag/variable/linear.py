@@ -1,5 +1,6 @@
 """Linear variable implementation for structural equation models."""
 
+import torch
 from torch import Tensor
 from typing import Iterable
 from steindag.variable.base import Variable
@@ -77,6 +78,9 @@ class LinearVariable(Variable):
         Returns:
             The linear combination: intercept + sum(coefs[parent] * parent).
         """
+        if not parents:
+            return torch.tensor(self._intercept)
+
         f_bar: Tensor | float = self._intercept
         for parent_name, parent in parents.items():
             f_bar = f_bar + self._coefs[parent_name] * parent

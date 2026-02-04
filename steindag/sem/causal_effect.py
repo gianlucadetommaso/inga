@@ -1,5 +1,6 @@
 """Causal effect computation mixin for Structural Equation Models."""
 
+import torch
 from torch import Tensor, vmap, no_grad
 from torch.func import grad
 from functools import partial
@@ -129,9 +130,9 @@ class CausalEffectMixin:
             raise ValueError("`treatment_name` and `observed_name` cannot be equal.")
 
         u_latent_samples = self.posterior.sample(num_samples)
-        pruned_observed = {name: values for name, values in observed.items() if not self._is_on_causal_path(name, treatment_name, outcome_name)}
+        mediator_names = {name for name in observed if self._is_on_causal_path(name, treatment_name, outcome_name)}
 
-        @partial(vmap, in_dims=1, out_dims=1)
+        @partial(vmap, in_dims=1, out_dims=0)
         def f_bar_outcome_per_sample(u_latent_sample: dict[str, Tensor]) -> Tensor:
             @vmap
             def f_bar_outcome_per_observation(
@@ -144,7 +145,12 @@ class CausalEffectMixin:
                     observed={
                         name: values
                         for name, values in single_observed.items()
-                        if name != treatment_name
+                        if name != treatment_name and name not in mediator_names
+                    },
+                    mediator_observed={
+                        name: values
+                        for name, values in single_observed.items()
+                        if name in mediator_names
                     },
                     treatment_name=treatment_name,
                     outcome_name=outcome_name,
@@ -152,24 +158,33 @@ class CausalEffectMixin:
 
                 return grad(f_bar_outcome)(single_observed[treatment_name])
 
-            return f_bar_outcome_per_observation(u_latent_sample, pruned_observed)
+            return f_bar_outcome_per_observation(u_latent_sample, observed)
 
-        return f_bar_outcome_per_sample(u_latent_samples)
+        return f_bar_outcome_per_sample(u_latent_samples).T
 
     def _f_bar_outcome(
         self,
         treatment: Tensor,
         u_latent: dict[str, Tensor],
         observed: dict[str, Tensor],
+        mediator_observed: dict[str, Tensor],
         treatment_name: str,
         outcome_name: str,
     ) -> Tensor:
         """Compute the mean function of the outcome variable.
 
+        For mediators (observed variables on the causal path), computes the
+        counterfactual value under intervention by deriving the noise from
+        observed values and recomputing with the intervention treatment.
+
         Args:
             treatment: Value of the treatment variable.
             u_latent: Dictionary mapping latent variable names to noise values.
-            observed: Dictionary mapping observed variable names to their values.
+            observed: Dictionary mapping observed variable names to their values
+                (excluding treatment and mediators).
+            mediator_observed: Dictionary mapping mediator names to their observed
+                values. Used to compute counterfactual mediator values under
+                intervention.
             treatment_name: Name of the treatment variable.
             outcome_name: Name of the outcome variable.
 
@@ -193,6 +208,13 @@ class CausalEffectMixin:
                 return self._variables[name].f_bar(parents)
             elif name in observed:
                 values[name] = observed[name]
+            elif name in mediator_observed:
+                # Compute noise from observed mediator value (detached from gradient)
+                # and use it to reconstruct the counterfactual mediator under intervention.
+                # The noise is detached so the gradient flows only through f_bar.
+                f_bar = variable.f_bar(parents)
+                u = ((mediator_observed[name] - f_bar) / variable.sigma).detach()
+                values[name] = variable.f(parents, u, f_bar=f_bar)
             else:
                 values[name] = variable.f(parents, u_latent[name])
 

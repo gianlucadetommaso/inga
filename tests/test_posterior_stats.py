@@ -7,6 +7,8 @@ derived ground truth for a simple linear SEM.
 
 import torch
 from torch import Tensor
+from torch.func import grad
+from functools import partial
 import pytest
 from steindag.variable.linear import LinearVariable
 from steindag.sem.base import SEM
@@ -106,6 +108,95 @@ class TestPosteriorStats:
             f"Posterior variance error too large: {var_error}"
         )
 
+
+class TestCausalBiasComponents:
+    """Tests for individual components of the causal bias formula for linear confounder case.
+    
+    For the linear model Z -> X -> Y with Z -> Y (confounder), when only X is observed:
+    - du_fy = 0 (dY/du_X = 0 because Y depends on X, not u_X directly)
+    - dx_diff = -1 (for treatment variable)
+    - mid_term = gamma * alpha / (1 + alpha^2) (confounding bias contribution)
+    """
+
+    def test_du_fy_is_zero_for_treatment(
+        self, sem: SEM, values: dict[str, Tensor]
+    ) -> None:
+        """Test that du_fy = 0 for the treatment variable X.
+
+        For Y = beta*X + gamma*Z + u_Y, the derivative dY/du_X should be 0
+        because Y's structural equation depends on X directly, not through u_X.
+        """
+
+        observed: dict[str, Tensor] = {"X": values["X"][:1]}
+        sem.posterior.fit(observed)
+
+        torch.manual_seed(0)
+        u_latent_samples = sem.posterior.sample(1)
+        u_latent = {k: v[0, 0] for k, v in u_latent_samples.items()}
+        obs = {k: v[0] for k, v in observed.items()}
+
+        u_x = sem._get_u_observed(u_latent, obs, "X")
+
+        fy_bar_u = partial(
+            sem._fy_bar_u,
+            u_latent=u_latent,
+            observed=obs,
+            input_name="X",
+            treatment_name="X",
+            outcome_name="Y",
+        )
+        du_fy = grad(fy_bar_u)(u_x)
+
+        assert torch.allclose(du_fy, torch.tensor(0.0), atol=1e-5), (
+            f"du_fy should be 0 for treatment variable, got {du_fy}"
+        )
+
+    def test_mid_term_equals_expected_for_linear_confounder(
+        self, sem: SEM, values: dict[str, Tensor]
+    ) -> None:
+        """Test that mean of mid_term equals gamma*alpha/(1+alpha^2).
+
+        The mid_term captures the confounding bias contribution, and its
+        expected value should equal gamma * alpha / (1 + alpha^2).
+        """
+        alpha = _get_coef(sem, "X", "Z")
+        gamma = _get_coef(sem, "Y", "Z")
+
+        observed: dict[str, Tensor] = {"X": values["X"]}
+        sem.posterior.fit(observed)
+
+        torch.manual_seed(0)
+        u_latent_samples = sem.posterior.sample(10000)
+        outcome_means = sem._cond_mean_outcome(
+            u_latent_samples, observed, outcome_name="Y"
+        )
+
+        # Compute mid_term for each sample and observation, then average
+        mid_terms = []
+        num_obs = observed["X"].shape[0]
+        num_samples = 10000
+
+        for i in range(num_obs):
+            sample_mid_terms = []
+            for j in range(num_samples):
+                u_latent = {k: v[i, j] for k, v in u_latent_samples.items()}
+                obs = {k: v[i] for k, v in observed.items()}
+                mid_term = sem._mid_term(
+                    u_latent, obs,
+                    outcome_mean=outcome_means[i],
+                    observed_name="X",
+                    outcome_name="Y"
+                )
+                sample_mid_terms.append(mid_term)
+            mid_terms.append(torch.stack(sample_mid_terms).mean())
+
+        mean_mid_term = torch.stack(mid_terms).mean()
+        expected_mid_term = gamma * alpha / (1 + alpha**2)
+
+        assert torch.allclose(mean_mid_term, torch.tensor(expected_mid_term), atol=0.1), (
+            f"mid_term mean should equal gamma*alpha/(1+alpha^2)={expected_mid_term}, got {mean_mid_term}"
+        )
+
     def test_causal_effect_equals_beta_when_observing_x_only(
         self, sem: SEM, values: dict[str, Tensor]
     ) -> None:
@@ -139,6 +230,34 @@ class TestPosteriorStats:
         assert torch.allclose(
             causal_effect_var, expected_causal_effect_var, atol=1e-5
         ), f"Causal effect variance should be 0, got {causal_effect_var}"
+
+    def test_causal_bias_when_observing_x_only(
+        self, sem: SEM, values: dict[str, Tensor]
+    ) -> None:
+        """Test that causal bias of X on Y equals gamma*alpha/(1+alpha^2) when only X is observed.
+
+        For the linear model with Z -> X -> Y and Z -> Y, when only X is observed,
+        the causal bias arises from the confounding path through Z.
+        The analytical causal bias is: gamma * alpha / (1 + alpha^2)
+
+        where:
+        - alpha is the coefficient from Z to X
+        - gamma is the coefficient from Z to Y
+        """
+        alpha = _get_coef(sem, "X", "Z")
+        gamma = _get_coef(sem, "Y", "Z")
+
+        observed: dict[str, Tensor] = {"X": values["X"]}
+
+        sem.posterior.fit(observed)
+
+        causal_bias = sem.causal_bias(observed, treatment_name="X", outcome_name="Y")
+
+        expected_causal_bias = torch.full_like(causal_bias, gamma * alpha / (1 + alpha**2))
+
+        assert torch.allclose(causal_bias, expected_causal_bias, atol=0.2), (
+            f"Causal bias should equal gamma*alpha/(1+alpha^2)={gamma * alpha / (1 + alpha**2)}, got {causal_bias}"
+        )
 
     def test_posterior_stats_observe_x_and_y(
         self, sem: SEM, values: dict[str, Tensor]
@@ -174,4 +293,224 @@ class TestPosteriorStats:
         )
         assert torch.all(var_error < 0.05), (
             f"Posterior variance error too large: {var_error}"
+        )
+
+
+class TestOvercontrolModel:
+    """Tests for causal effect and causal bias in the overcontrol model.
+
+    For the linear overcontrol model:
+    - X = U_X
+    - V = alpha * X + U_V
+    - Y = beta * X + gamma * V + U_Y
+
+    When observing X and V:
+    - Expected causal effect: beta + gamma * alpha
+    - Expected causal bias: -gamma * alpha
+    """
+
+    @pytest.fixture
+    def overcontrol_sem(self) -> SEM:
+        """Create a test SEM with overcontrol structure X -> V, X -> Y, V -> Y.
+
+        Returns:
+            A SEM with three linear variables and unit noise.
+        """
+        return SEM(
+            variables=[
+                LinearVariable(
+                    name="X", parent_names=[], sigma=1.0, coefs={}, intercept=0.0
+                ),
+                LinearVariable(
+                    name="V", parent_names=["X"], sigma=1.0, coefs={"X": 1.0}, intercept=0.0
+                ),
+                LinearVariable(
+                    name="Y",
+                    parent_names=["X", "V"],
+                    sigma=1.0,
+                    coefs={"X": 2.0, "V": 3.0},
+                    intercept=0.0,
+                ),
+            ]
+        )
+
+    @pytest.fixture
+    def overcontrol_values(self, overcontrol_sem: SEM) -> dict[str, Tensor]:
+        """Generate sample values from the overcontrol SEM.
+
+        Args:
+            overcontrol_sem: The structural equation model.
+
+        Returns:
+            Dictionary of generated values for all variables.
+        """
+        torch.manual_seed(42)
+        return overcontrol_sem.generate(10)
+
+    def test_causal_effect_overcontrol(
+        self, overcontrol_sem: SEM, overcontrol_values: dict[str, Tensor]
+    ) -> None:
+        """Test that causal effect of X on Y equals beta + gamma * alpha when observing X and V.
+
+        For the overcontrol model Y = beta*X + gamma*V + noise, where V = alpha*X + noise,
+        the causal effect of X on Y is the total derivative dY/dX = beta + gamma * alpha.
+        """
+        alpha = _get_coef(overcontrol_sem, "V", "X")
+        beta = _get_coef(overcontrol_sem, "Y", "X")
+        gamma = _get_coef(overcontrol_sem, "Y", "V")
+
+        observed: dict[str, Tensor] = {
+            "X": overcontrol_values["X"],
+            "V": overcontrol_values["V"],
+        }
+
+        overcontrol_sem.posterior.fit(observed)
+
+        causal_effect = overcontrol_sem.causal_effect(
+            observed, treatment_name="X", outcome_name="Y"
+        )
+
+        expected_causal_effect = torch.full_like(causal_effect, beta + gamma * alpha)
+
+        assert torch.allclose(causal_effect, expected_causal_effect, atol=1e-5), (
+            f"Causal effect should equal beta + gamma*alpha={beta + gamma * alpha}, got {causal_effect}"
+        )
+
+    def test_causal_bias_overcontrol(
+        self, overcontrol_sem: SEM, overcontrol_values: dict[str, Tensor]
+    ) -> None:
+        """Test that causal bias of X on Y equals -gamma * alpha when observing X and V.
+
+        For the overcontrol model, when we observe X and V, we overcontrol for V
+        which is a mediator on the causal path from X to Y.
+        The analytical causal bias is: -gamma * alpha
+        """
+        alpha = _get_coef(overcontrol_sem, "V", "X")
+        gamma = _get_coef(overcontrol_sem, "Y", "V")
+
+        observed: dict[str, Tensor] = {
+            "X": overcontrol_values["X"],
+            "V": overcontrol_values["V"],
+        }
+
+        overcontrol_sem.posterior.fit(observed)
+
+        causal_bias = overcontrol_sem.causal_bias(
+            observed, treatment_name="X", outcome_name="Y"
+        )
+
+        expected_causal_bias = torch.full_like(causal_bias, -gamma * alpha)
+
+        assert torch.allclose(causal_bias, expected_causal_bias, atol=0.2), (
+            f"Causal bias should equal -gamma*alpha={-gamma * alpha}, got {causal_bias}"
+        )
+
+
+class TestEndogenousSelectionModel:
+    """Tests for causal effect and causal bias in the endogenous selection model.
+
+    For the linear endogenous selection model:
+    - X = U_X
+    - Y = alpha * X + U_Y
+    - V = beta * X + gamma * Y + U_V
+
+    When observing X and V:
+    - Expected causal effect: alpha
+    - Expected causal bias: -(gamma * (beta + gamma * alpha)) / (1 + gamma^2)
+    """
+
+    @pytest.fixture
+    def endogenous_selection_sem(self) -> SEM:
+        """Create a test SEM with endogenous selection structure X -> Y, X -> V, Y -> V.
+
+        Returns:
+            A SEM with three linear variables and unit noise.
+        """
+        return SEM(
+            variables=[
+                LinearVariable(
+                    name="X", parent_names=[], sigma=1.0, coefs={}, intercept=0.0
+                ),
+                LinearVariable(
+                    name="Y", parent_names=["X"], sigma=1.0, coefs={"X": 1.0}, intercept=0.0
+                ),
+                LinearVariable(
+                    name="V",
+                    parent_names=["X", "Y"],
+                    sigma=1.0,
+                    coefs={"X": 2.0, "Y": 3.0},
+                    intercept=0.0,
+                ),
+            ]
+        )
+
+    @pytest.fixture
+    def endogenous_selection_values(self, endogenous_selection_sem: SEM) -> dict[str, Tensor]:
+        """Generate sample values from the endogenous selection SEM.
+
+        Args:
+            endogenous_selection_sem: The structural equation model.
+
+        Returns:
+            Dictionary of generated values for all variables.
+        """
+        torch.manual_seed(42)
+        return endogenous_selection_sem.generate(10)
+
+    def test_causal_effect_endogenous_selection(
+        self, endogenous_selection_sem: SEM, endogenous_selection_values: dict[str, Tensor]
+    ) -> None:
+        """Test that causal effect of X on Y equals alpha when observing X and V.
+
+        For the endogenous selection model Y = alpha*X + noise,
+        the causal effect of X on Y is the partial derivative dY/dX = alpha.
+        """
+        alpha = _get_coef(endogenous_selection_sem, "Y", "X")
+
+        observed: dict[str, Tensor] = {
+            "X": endogenous_selection_values["X"],
+            "V": endogenous_selection_values["V"],
+        }
+
+        endogenous_selection_sem.posterior.fit(observed)
+
+        causal_effect = endogenous_selection_sem.causal_effect(
+            observed, treatment_name="X", outcome_name="Y"
+        )
+
+        expected_causal_effect = torch.full_like(causal_effect, alpha)
+
+        assert torch.allclose(causal_effect, expected_causal_effect, atol=1e-5), (
+            f"Causal effect should equal alpha={alpha}, got {causal_effect}"
+        )
+
+    def test_causal_bias_endogenous_selection(
+        self, endogenous_selection_sem: SEM, endogenous_selection_values: dict[str, Tensor]
+    ) -> None:
+        """Test causal bias of X on Y when observing X and V in endogenous selection model.
+
+        For the endogenous selection model, when we observe X and V,
+        the analytical causal bias is: -(gamma * (beta + gamma * alpha)) / (1 + gamma^2)
+        """
+        alpha = _get_coef(endogenous_selection_sem, "Y", "X")
+        beta = _get_coef(endogenous_selection_sem, "V", "X")
+        gamma = _get_coef(endogenous_selection_sem, "V", "Y")
+
+        observed: dict[str, Tensor] = {
+            "X": endogenous_selection_values["X"],
+            "V": endogenous_selection_values["V"],
+        }
+
+        endogenous_selection_sem.posterior.fit(observed)
+
+        causal_bias = endogenous_selection_sem.causal_bias(
+            observed, treatment_name="X", outcome_name="Y"
+        )
+
+        expected_causal_bias = torch.full_like(
+            causal_bias, -(gamma * (beta + gamma * alpha)) / (1 + gamma**2)
+        )
+
+        assert torch.allclose(causal_bias, expected_causal_bias, atol=0.2), (
+            f"Causal bias should equal -(gamma*(beta+gamma*alpha))/(1+gamma^2)={-(gamma * (beta + gamma * alpha)) / (1 + gamma**2)}, got {causal_bias}"
         )
