@@ -183,13 +183,13 @@ class LaplacePosterior:
 
             if name in observed:
                 values[name] = observed[name]
-                u = observed[name] - f_bar
+                u = (observed[name] - f_bar) / variable.sigma
 
             else:
                 values[name] = variable.f(parents, u_latent[name], f_bar)
                 u = u_latent[name]
 
-            loss = loss + 0.5 * torch.sum((u / variable.sigma) ** 2)
+            loss = loss + 0.5 * torch.sum(u**2)
 
         return loss  # type: ignore[return-value]
 
@@ -310,7 +310,7 @@ class LaplacePosterior:
             else:
                 values[name] = variable.f(parents, u_latent[name])
 
-        raise ValueError(f"Observed variable '{observed_name}' not found in SEM")
+        raise ValueError(f"Observed variable '{observed_name}' not found in the SEM.")
 
     def _ravel(self, u_latent: dict[str, Tensor]) -> Tensor:
         """Convert a dictionary of latent variables to a stacked tensor.
