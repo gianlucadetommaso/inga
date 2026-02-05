@@ -20,7 +20,7 @@ def _run_commands(names: list[str]) -> None:
     """
     for name in names:
         if name not in COMMANDS:
-            print(f"❌ Unknown command: {name}")
+            print(f"ERROR: Unknown command: {name}")
             print(f"Available commands: {', '.join(COMMANDS.keys())}")
             sys.exit(1)
 
@@ -31,11 +31,11 @@ def _run_commands(names: list[str]) -> None:
 
         result = subprocess.run(cmd)
         if result.returncode != 0:
-            print(f"\n❌ {description} failed!")
+            print(f"\nERROR: {description} failed!")
             sys.exit(result.returncode)
 
     print(f"\n{'=' * 60}")
-    print("✅ All steps completed!")
+    print("All steps completed!")
     print(f"{'=' * 60}\n")
 
 

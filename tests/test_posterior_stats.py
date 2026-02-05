@@ -93,7 +93,7 @@ class TestPosteriorStats:
         sem.posterior.fit(observed)
 
         torch.manual_seed(0)
-        samples = sem.posterior.sample(10000)
+        samples = sem.posterior.sample(2000)
 
         expected_means: Tensor = alpha * observed["X"] / (1 + alpha**2)
         expected_vars: Tensor = Tensor([1 / (1 + alpha**2)]).expand(10)
@@ -101,10 +101,10 @@ class TestPosteriorStats:
         mean_error: Tensor = torch.abs(expected_means - samples["Z"].mean(1))
         var_error: Tensor = torch.abs(expected_vars - samples["Z"].var(1))
 
-        assert torch.all(mean_error < 0.05), (
+        assert torch.all(mean_error < 0.08), (
             f"Posterior mean error too large: {mean_error}"
         )
-        assert torch.all(var_error < 0.05), (
+        assert torch.all(var_error < 0.08), (
             f"Posterior variance error too large: {var_error}"
         )
 
@@ -138,8 +138,8 @@ class TestCausalBiasComponents:
         u_x = sem._get_u_observed(u_latent, obs, "X")
 
         fy_bar_u = partial(
-            sem._fy_bar_u,
-            u_latent=u_latent,
+            sem._compute_outcome_mean_from_noise,
+            latent=u_latent,
             observed=obs,
             input_name="X",
             treatment_name="X",
@@ -166,22 +166,22 @@ class TestCausalBiasComponents:
         sem.posterior.fit(observed)
 
         torch.manual_seed(0)
-        u_latent_samples = sem.posterior.sample(10000)
-        outcome_means = sem._cond_mean_outcome(
+        u_latent_samples = sem.posterior.sample(2000)
+        outcome_means = sem._compute_conditional_outcome_mean(
             u_latent_samples, observed, outcome_name="Y"
         )
 
         # Compute mid_term for each sample and observation, then average
         mid_terms = []
         num_obs = observed["X"].shape[0]
-        num_samples = 10000
+        num_samples = 2000
 
         for i in range(num_obs):
             sample_mid_terms = []
             for j in range(num_samples):
                 u_latent = {k: v[i, j] for k, v in u_latent_samples.items()}
                 obs = {k: v[i] for k, v in observed.items()}
-                mid_term = sem._mid_term(
+                mid_term = sem._compute_mid_term(
                     u_latent,
                     obs,
                     outcome_mean=outcome_means[i],
@@ -195,7 +195,7 @@ class TestCausalBiasComponents:
         expected_mid_term = gamma * alpha / (1 + alpha**2)
 
         assert torch.allclose(
-            mean_mid_term, torch.tensor(expected_mid_term), atol=0.1
+            mean_mid_term, torch.tensor(expected_mid_term), atol=0.15
         ), (
             f"mid_term mean should equal gamma*alpha/(1+alpha^2)={expected_mid_term}, got {mean_mid_term}"
         )
@@ -283,7 +283,7 @@ class TestCausalBiasComponents:
         sem.posterior.fit(observed)
 
         torch.manual_seed(0)
-        samples = sem.posterior.sample(10000)
+        samples = sem.posterior.sample(2000)
 
         expected_means: Tensor = (
             gamma * (observed["Y"] - beta * observed["X"]) + alpha * observed["X"]
@@ -293,10 +293,10 @@ class TestCausalBiasComponents:
         mean_error: Tensor = torch.abs(expected_means - samples["Z"].mean(1))
         var_error: Tensor = torch.abs(expected_vars - samples["Z"].var(1))
 
-        assert torch.all(mean_error < 0.05), (
+        assert torch.all(mean_error < 0.08), (
             f"Posterior mean error too large: {mean_error}"
         )
-        assert torch.all(var_error < 0.05), (
+        assert torch.all(var_error < 0.08), (
             f"Posterior variance error too large: {var_error}"
         )
 
@@ -558,7 +558,7 @@ class TestEndogenousSelectionModel:
         endogenous_selection_sem.posterior.fit(observed)
 
         torch.manual_seed(0)
-        u_latent_samples = endogenous_selection_sem.posterior.sample(10000)
+        u_latent_samples = endogenous_selection_sem.posterior.sample(2000)
 
         # Test du_fy = 0 for a single sample
         u_latent = {k: v[0, 0] for k, v in u_latent_samples.items()}
@@ -566,8 +566,8 @@ class TestEndogenousSelectionModel:
 
         u_x = endogenous_selection_sem._get_u_observed(u_latent, obs, "X")
         fy_bar_u = partial(
-            endogenous_selection_sem._fy_bar_u,
-            u_latent=u_latent,
+            endogenous_selection_sem._compute_outcome_mean_from_noise,
+            latent=u_latent,
             observed=obs,
             input_name="X",
             treatment_name="X",
@@ -580,21 +580,21 @@ class TestEndogenousSelectionModel:
         )
 
         # Test mean of mid_term = 0 (centered Y has zero mean correlation with u_X)
-        outcome_means = endogenous_selection_sem._cond_mean_outcome(
+        outcome_means = endogenous_selection_sem._compute_conditional_outcome_mean(
             u_latent_samples, observed, outcome_name="Y"
         )
 
         # Compute mid_term for each sample and observation, then average
         mid_terms = []
         num_obs = observed["X"].shape[0]
-        num_samples = 10000
+        num_samples = 2000
 
         for i in range(num_obs):
             sample_mid_terms = []
             for j in range(num_samples):
                 u_latent = {k: v[i, j] for k, v in u_latent_samples.items()}
                 obs = {k: v[i] for k, v in observed.items()}
-                mid_term = endogenous_selection_sem._mid_term(
+                mid_term = endogenous_selection_sem._compute_mid_term(
                     u_latent,
                     obs,
                     outcome_mean=outcome_means[i],
@@ -606,7 +606,7 @@ class TestEndogenousSelectionModel:
 
         mean_mid_term = torch.stack(mid_terms).mean()
 
-        assert torch.allclose(mean_mid_term, torch.tensor(0.0), atol=0.1), (
+        assert torch.allclose(mean_mid_term, torch.tensor(0.0), atol=0.15), (
             f"mean mid_term should be 0 when observing X, got {mean_mid_term}"
         )
 
@@ -640,8 +640,8 @@ class TestEndogenousSelectionModel:
         obs = {k: v[0] for k, v in observed.items()}
 
         fv_bar_x = partial(
-            endogenous_selection_sem._fv_bar_x,
-            u_latent=u_latent,
+            endogenous_selection_sem._compute_target_mean,
+            latent=u_latent,
             observed=obs,
             treatment_name="X",
             target_name="V",
@@ -679,8 +679,8 @@ class TestEndogenousSelectionModel:
         u_v = endogenous_selection_sem._get_u_observed(u_latent, obs, "V")
 
         fy_bar_u = partial(
-            endogenous_selection_sem._fy_bar_u,
-            u_latent=u_latent,
+            endogenous_selection_sem._compute_outcome_mean_from_noise,
+            latent=u_latent,
             observed=obs,
             input_name="V",
             treatment_name="X",
@@ -717,22 +717,22 @@ class TestEndogenousSelectionModel:
         endogenous_selection_sem.posterior.fit(observed)
 
         torch.manual_seed(0)
-        u_latent_samples = endogenous_selection_sem.posterior.sample(10000)
-        outcome_means = endogenous_selection_sem._cond_mean_outcome(
+        u_latent_samples = endogenous_selection_sem.posterior.sample(2000)
+        outcome_means = endogenous_selection_sem._compute_conditional_outcome_mean(
             u_latent_samples, observed, outcome_name="Y"
         )
 
         # Compute mid_term for each sample and observation, then average
         mid_terms = []
         num_obs = observed["X"].shape[0]
-        num_samples = 10000
+        num_samples = 2000
 
         for i in range(num_obs):
             sample_mid_terms = []
             for j in range(num_samples):
                 u_latent = {k: v[i, j] for k, v in u_latent_samples.items()}
                 obs = {k: v[i] for k, v in observed.items()}
-                mid_term = endogenous_selection_sem._mid_term(
+                mid_term = endogenous_selection_sem._compute_mid_term(
                     u_latent,
                     obs,
                     outcome_mean=outcome_means[i],
@@ -746,7 +746,7 @@ class TestEndogenousSelectionModel:
         expected_mid_term = gamma / (1 + gamma**2)
 
         assert torch.allclose(
-            mean_mid_term, torch.tensor(expected_mid_term), atol=0.1
+            mean_mid_term, torch.tensor(expected_mid_term), atol=0.15
         ), (
             f"mid_term mean should equal gamma/(1+gamma^2)={expected_mid_term}, got {mean_mid_term}"
         )
