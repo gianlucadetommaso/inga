@@ -53,9 +53,7 @@ class SEMDataset:
             "effect_keys": [
                 [key[0], key[1], list(key[2])] for key in self.causal_effects
             ],
-            "bias_keys": [
-                [key[0], key[1], list(key[2])] for key in self.causal_biases
-            ],
+            "bias_keys": [[key[0], key[1], list(key[2])] for key in self.causal_biases],
         }
         base_path.with_suffix(".json").write_text(json.dumps(metadata, indent=2))
 
@@ -99,9 +97,7 @@ def _sample_query(
     outcome_name = rng.choice(candidate_outcomes)
 
     observed_candidates = [
-        name
-        for name in variable_names
-        if name not in {treatment_name, outcome_name}
+        name for name in variable_names if name not in {treatment_name, outcome_name}
     ]
     max_observed = max(min_observed, len(observed_candidates))
     observed_size = rng.randint(min_observed, max_observed)

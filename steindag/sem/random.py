@@ -153,9 +153,7 @@ def random_sem(config: RandomSEMConfig) -> SEM:
 
         use_nonlinear = rng.random() < config.nonlinear_prob
         transform_names = _sample_transform_names(rng) if use_nonlinear else None
-        transforms = (
-            resolve_transforms(transform_names) if transform_names else None
-        )
+        transforms = resolve_transforms(transform_names) if transform_names else None
 
         if use_nonlinear:
             f_mean = _build_f_mean(parents, coefs, intercept, transforms)
