@@ -3,5 +3,22 @@
 from steindag.sem.base import SEM
 from steindag.sem.causal_effect import CausalEffectMixin
 from steindag.sem.random import RandomSEMConfig, random_sem
+from steindag.sem.dataset import (
+    CausalQueryConfig,
+    SEMDataset,
+    SEMDatasetConfig,
+    generate_sem_dataset,
+    load_sem_dataset,
+)
 
-__all__ = ["SEM", "CausalEffectMixin", "RandomSEMConfig", "random_sem"]
+__all__ = [
+    "SEM",
+    "CausalEffectMixin",
+    "RandomSEMConfig",
+    "random_sem",
+    "CausalQueryConfig",
+    "SEMDataset",
+    "SEMDatasetConfig",
+    "generate_sem_dataset",
+    "load_sem_dataset",
+]

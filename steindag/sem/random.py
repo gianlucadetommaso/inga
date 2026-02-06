@@ -39,16 +39,36 @@ def _compose_transforms(
     return value
 
 
+_TRANSFORM_MAP: dict[str, Callable[[Tensor], Tensor]] = {
+    "sin": torch.sin,
+    "cos": torch.cos,
+    "exp": torch.exp,
+    "tanh": torch.tanh,
+}
+
+
 def _sample_transforms(rng: random.Random) -> list[Callable[[Tensor], Tensor]]:
     """Sample a list of nonlinear transforms."""
-    transform_pool: list[Callable[[Tensor], Tensor]] = [
-        torch.sin,
-        torch.cos,
-        torch.exp,
-        torch.tanh,
-    ]
+    transform_pool = list(_TRANSFORM_MAP.values())
     num_transforms = rng.randint(1, 3)
     return rng.sample(transform_pool, k=num_transforms)
+
+
+def _sample_transform_names(rng: random.Random) -> list[str]:
+    """Sample a list of nonlinear transform names."""
+    transform_pool = list(_TRANSFORM_MAP.keys())
+    num_transforms = rng.randint(1, 3)
+    return rng.sample(transform_pool, k=num_transforms)
+
+
+def resolve_transforms(names: Iterable[str]) -> list[Callable[[Tensor], Tensor]]:
+    """Resolve transform names to callables."""
+    transforms: list[Callable[[Tensor], Tensor]] = []
+    for name in names:
+        if name not in _TRANSFORM_MAP:
+            raise ValueError(f"Unknown transform '{name}'.")
+        transforms.append(_TRANSFORM_MAP[name])
+    return transforms
 
 
 def _build_f_mean(
@@ -132,7 +152,10 @@ def random_sem(config: RandomSEMConfig) -> SEM:
         coefs = {parent: rng.uniform(*config.coef_range) for parent in parents}
 
         use_nonlinear = rng.random() < config.nonlinear_prob
-        transforms = _sample_transforms(rng) if use_nonlinear else None
+        transform_names = _sample_transform_names(rng) if use_nonlinear else None
+        transforms = (
+            resolve_transforms(transform_names) if transform_names else None
+        )
 
         if use_nonlinear:
             f_mean = _build_f_mean(parents, coefs, intercept, transforms)
@@ -142,6 +165,9 @@ def random_sem(config: RandomSEMConfig) -> SEM:
                     parent_names=parents,
                     sigma=sigma,
                     f_mean=f_mean,
+                    coefs=coefs,
+                    intercept=intercept,
+                    transforms=transform_names,
                 )
             )
         else:
