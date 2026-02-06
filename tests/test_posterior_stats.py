@@ -264,6 +264,25 @@ class TestCausalBiasComponents:
             f"Causal bias should equal gamma*alpha/(1+alpha^2)={gamma * alpha / (1 + alpha**2)}, got {causal_bias}"
         )
 
+    def test_causal_bias_with_custom_conditional_mean(
+        self, sem: SEM, values: dict[str, Tensor]
+    ) -> None:
+        """Ensure custom conditional mean is used when provided."""
+        observed: dict[str, Tensor] = {"X": values["X"]}
+        sem.posterior.fit(observed)
+
+        def custom_mean(obs: dict[str, Tensor]) -> Tensor:
+            return torch.zeros_like(obs["X"])
+
+        causal_bias = sem.causal_bias(
+            observed,
+            treatment_name="X",
+            outcome_name="Y",
+            conditional_mean_fn=custom_mean,
+        )
+
+        assert causal_bias.shape == observed["X"].shape
+
     def test_posterior_stats_observe_x_and_y(
         self, sem: SEM, values: dict[str, Tensor]
     ) -> None:

@@ -6,7 +6,7 @@ import torch
 from torch import Tensor, vmap, no_grad
 from torch.func import grad
 from functools import partial
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 from steindag.sem.causal_effect import CausalEffectMixin
 
@@ -35,12 +35,14 @@ class CausalBiasMixin(CausalEffectMixin):
         treatment_name: str,
         outcome_name: str,
         num_samples: int = 1000,
+        conditional_mean_fn: Callable[[dict[str, Tensor]], Tensor] | None = None,
     ) -> Tensor:
         return self._compute_causal_bias_samples(
             observed=observed,
             treatment_name=treatment_name,
             outcome_name=outcome_name,
             num_samples=num_samples,
+            conditional_mean_fn=conditional_mean_fn,
         ).mean(dim=1)
 
     def causal_bias_var(
@@ -49,12 +51,14 @@ class CausalBiasMixin(CausalEffectMixin):
         treatment_name: str,
         outcome_name: str,
         num_samples: int = 1000,
+        conditional_mean_fn: Callable[[dict[str, Tensor]], Tensor] | None = None,
     ) -> Tensor:
         return self._compute_causal_bias_samples(
             observed=observed,
             treatment_name=treatment_name,
             outcome_name=outcome_name,
             num_samples=num_samples,
+            conditional_mean_fn=conditional_mean_fn,
         ).var(dim=1)
 
     @no_grad()
@@ -64,6 +68,7 @@ class CausalBiasMixin(CausalEffectMixin):
         treatment_name: str,
         outcome_name: str,
         num_samples: int = 1000,
+        conditional_mean_fn: Callable[[dict[str, Tensor]], Tensor] | None = None,
     ) -> Tensor:
         """Compute causal bias samples for each observation.
 
@@ -80,9 +85,12 @@ class CausalBiasMixin(CausalEffectMixin):
         self._validate_causal_query(observed, treatment_name, outcome_name)
 
         latent_samples = self.posterior.sample(num_samples)
-        outcome_means = self._compute_conditional_outcome_mean(
-            latent_samples, observed, outcome_name
-        )
+        if conditional_mean_fn is None:
+            outcome_means = self._compute_conditional_outcome_mean(
+                latent_samples, observed, outcome_name
+            )
+        else:
+            outcome_means = conditional_mean_fn(observed)
 
         bias_samples = torch.zeros(
             observed[treatment_name].shape[0], num_samples, device=outcome_means.device
