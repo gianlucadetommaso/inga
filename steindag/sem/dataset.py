@@ -6,12 +6,14 @@ from dataclasses import dataclass
 import json
 from pathlib import Path
 import random
+from typing import Any, Callable, Iterable, Sequence
 
 import torch
 from torch import Tensor
 
 from steindag.sem.base import SEM
 from steindag.sem.random import RandomSEMConfig, random_sem, resolve_transforms
+from steindag.variable.base import Variable
 from steindag.variable.linear import LinearVariable
 from steindag.variable.functional import FunctionalVariable
 
@@ -205,7 +207,7 @@ def load_sem_dataset(path: str | Path) -> SEMDataset:
     )
 
 
-def _serialize_sem(sem: SEM) -> dict[str, object]:
+def _serialize_sem(sem: SEM) -> dict[str, Any]:
     """Serialize SEM definition to a JSON-compatible spec."""
     variables = []
     for name, variable in sem._variables.items():
@@ -238,12 +240,17 @@ def _serialize_sem(sem: SEM) -> dict[str, object]:
     return {"variables": variables}
 
 
-def _deserialize_sem(spec: dict[str, object]) -> SEM:
+def _deserialize_sem(spec: dict[str, Any]) -> SEM:
     """Reconstruct a SEM from a serialized spec."""
     variables_spec = spec["variables"]
-    variables: list[LinearVariable | FunctionalVariable] = []
-    for item in variables_spec:  # type: ignore[assignment]
-        var_type = item["type"]
+    if not isinstance(variables_spec, list):
+        raise ValueError("SEM spec 'variables' must be a list.")
+
+    variables: list[Variable] = []
+    for item in variables_spec:
+        if not isinstance(item, dict):
+            raise ValueError("SEM variable spec entries must be dictionaries.")
+        var_type = item.get("type")
         if var_type == "linear":
             variables.append(
                 LinearVariable(
@@ -283,8 +290,8 @@ def _build_f_mean_from_spec(
     parent_names: list[str],
     coefs: dict[str, float],
     intercept: float,
-    transforms: list[callable],
-) -> callable:
+    transforms: Sequence[Callable[[Tensor], Tensor]],
+) -> Callable[[dict[str, Tensor]], Tensor]:
     def f_mean(parents: dict[str, Tensor]) -> Tensor:
         base = torch.tensor(intercept)
         for parent_name in parent_names:
