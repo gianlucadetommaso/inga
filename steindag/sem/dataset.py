@@ -6,7 +6,7 @@ from dataclasses import dataclass
 import json
 from pathlib import Path
 import random
-from typing import Any, Callable, Iterable, Sequence
+from typing import Any, Callable, Sequence
 
 import torch
 from torch import Tensor
