@@ -152,7 +152,8 @@ class LaplacePosterior:
             optimizer.zero_grad()
             loss = self._posterior_loss_fn(u_latent, observed)
             loss.backward()
-            return loss
+            # Preserve gradients via backward, but return a detached scalar for LBFGS.
+            return loss.detach()
 
         optimizer.step(closure)
 
@@ -179,14 +180,14 @@ class LaplacePosterior:
                 for pa_name, parent in values.items()
                 if pa_name in variable.parent_names
             }
-            f_bar = variable.f_bar(parents)
+            f_mean = variable.f_mean(parents)
 
             if name in observed:
                 values[name] = observed[name]
-                u = (observed[name] - f_bar) / variable.sigma
+                u = (observed[name] - f_mean) / variable.sigma
 
             else:
-                values[name] = variable.f(parents, u_latent[name], f_bar)
+                values[name] = variable.f(parents, u_latent[name], f_mean)
                 u = u_latent[name]
 
             loss = loss + 0.5 * torch.sum(u**2)
@@ -235,13 +236,12 @@ class LaplacePosterior:
         )
 
         for observed_name in observed:
-            f_bar_wrt_u = partial(
-                self._f_bar_u,
+            f_mean_wrt_u = partial(
+                self._f_mean_u,
                 observed_name=observed_name,
                 latent_names=latent_names,
             )
-
-            g = vmap(lambda u, o: grad(partial(f_bar_wrt_u, observed=o))(u))(
+            g = vmap(lambda u, o: grad(partial(f_mean_wrt_u, observed=o))(u))(
                 u_latent_rav, observed
             )
             gn_hessian_rav += g[:, None] * g[:, :, None]
@@ -269,14 +269,14 @@ class LaplacePosterior:
         """
         return [name for name in self._variables if name in u_latent]
 
-    def _f_bar_u(
+    def _f_mean_u(
         self,
         u_latent_rav: Tensor,
         observed: dict[str, Tensor],
         observed_name: str,
         latent_names: list[str],
     ) -> Tensor:
-        """Compute f_bar of an observed variable as a function of latent noise.
+        """Compute f_mean of an observed variable as a function of latent noise.
 
         This is used to compute gradients for the Gauss-Newton Hessian.
         The gradient path through other observed variables is blocked.
@@ -284,11 +284,11 @@ class LaplacePosterior:
         Args:
             u_latent_rav: Raveled latent noise variables.
             observed: Dictionary of observed variable values.
-            observed_name: Name of the observed variable to compute f_bar for.
+            observed_name: Name of the observed variable to compute f_mean for.
             latent_names: List of latent variable names in order.
 
         Returns:
-            The f_bar value for the specified observed variable.
+            The f_mean value for the specified observed variable.
 
         Raises:
             ValueError: If observed_name is not found in the SEM.
@@ -304,7 +304,7 @@ class LaplacePosterior:
 
             if name in observed:
                 if name == observed_name:
-                    return self._variables[name].f_bar(parents)
+                    return self._variables[name].f_mean(parents)
 
                 values[name] = observed[name]
             else:

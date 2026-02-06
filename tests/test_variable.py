@@ -4,12 +4,13 @@ import pytest
 import torch
 from steindag.variable.base import Variable
 from steindag.variable.linear import LinearVariable
+from steindag.variable.functional import FunctionalVariable
 
 
 class ConcreteVariable(Variable):
     """Concrete implementation of Variable for testing."""
 
-    def f_bar(self, parents: dict[str, torch.Tensor]) -> torch.Tensor:
+    def f_mean(self, parents: dict[str, torch.Tensor]) -> torch.Tensor:
         """Return zero tensor for testing."""
         return torch.tensor(0.0)
 
@@ -74,15 +75,15 @@ class TestLinearVariable:
         assert var._coefs == {}
 
     @pytest.mark.parametrize("intercept", [0.0, 3.0, -1.5])
-    def test_f_bar_no_parents(self, intercept: float) -> None:
-        """Test f_bar with no parents returns intercept."""
+    def test_f_mean_no_parents(self, intercept: float) -> None:
+        """Test f_mean with no parents returns intercept."""
         var = LinearVariable(
             name="Z",
             sigma=1.0,
             intercept=intercept,
         )
 
-        result = var.f_bar({})
+        result = var.f_mean({})
         assert result == intercept
 
     @pytest.mark.parametrize(
@@ -93,8 +94,8 @@ class TestLinearVariable:
             (-1.0, 2.5),
         ],
     )
-    def test_f_bar_one_parent(self, coef_z: float, intercept: float) -> None:
-        """Test f_bar with one parent computes correct linear combination."""
+    def test_f_mean_one_parent(self, coef_z: float, intercept: float) -> None:
+        """Test f_mean with one parent computes correct linear combination."""
         var = LinearVariable(
             name="X",
             sigma=1.0,
@@ -103,7 +104,7 @@ class TestLinearVariable:
         )
 
         z = torch.tensor([1.0, 2.0, 3.0])
-        result = var.f_bar({"Z": z})
+        result = var.f_mean({"Z": z})
 
         expected = intercept + coef_z * z
         assert torch.allclose(result, expected)
@@ -116,10 +117,10 @@ class TestLinearVariable:
             (-0.5, 2.0, 1.0),
         ],
     )
-    def test_f_bar_multiple_parents(
+    def test_f_mean_multiple_parents(
         self, coef_x: float, coef_z: float, intercept: float
     ) -> None:
-        """Test f_bar with multiple parents computes correct linear combination."""
+        """Test f_mean with multiple parents computes correct linear combination."""
         var = LinearVariable(
             name="Y",
             sigma=1.0,
@@ -129,7 +130,7 @@ class TestLinearVariable:
 
         x = torch.tensor([1.0, 2.0])
         z = torch.tensor([0.5, 1.0])
-        result = var.f_bar({"X": x, "Z": z})
+        result = var.f_mean({"X": x, "Z": z})
 
         expected = intercept + coef_x * x + coef_z * z
         assert torch.allclose(result, expected)
@@ -145,7 +146,7 @@ class TestLinearVariable:
     def test_f_computes_value_with_noise(
         self, sigma: float, coef_z: float, intercept: float
     ) -> None:
-        """Test f adds noise correctly to f_bar."""
+        """Test f adds noise correctly to f_mean."""
         var = LinearVariable(
             name="X",
             sigma=sigma,
@@ -157,24 +158,24 @@ class TestLinearVariable:
         u = torch.tensor([0.5, -0.5, 1.0])
         result = var.f({"Z": z}, u)
 
-        f_bar = intercept + coef_z * z
-        expected = f_bar + sigma * u
+        f_mean = intercept + coef_z * z
+        expected = f_mean + sigma * u
         assert torch.allclose(result, expected)
 
     @pytest.mark.parametrize("sigma", [1.0, 2.0, 0.5])
-    def test_f_with_precomputed_f_bar(self, sigma: float) -> None:
-        """Test f uses precomputed f_bar when provided."""
+    def test_f_with_precomputed_f_mean(self, sigma: float) -> None:
+        """Test f uses precomputed f_mean when provided."""
         var = LinearVariable(
             name="X",
             sigma=sigma,
             coefs={"Z": 1.0},
         )
 
-        precomputed_f_bar = torch.tensor([10.0, 20.0, 30.0])
+        precomputed_f_mean = torch.tensor([10.0, 20.0, 30.0])
         u = torch.tensor([1.0, 1.0, 1.0])
-        result = var.f({}, u, f_bar=precomputed_f_bar)
+        result = var.f({}, u, f_mean=precomputed_f_mean)
 
-        expected = precomputed_f_bar + sigma * u
+        expected = precomputed_f_mean + sigma * u
         assert torch.allclose(result, expected)
 
     @pytest.mark.parametrize(
@@ -185,10 +186,10 @@ class TestLinearVariable:
             (2.0, -1.0, 0.5),
         ],
     )
-    def test_f_without_precomputed_f_bar(
+    def test_f_without_precomputed_f_mean(
         self, sigma: float, coef_z: float, intercept: float
     ) -> None:
-        """Test f computes f_bar when not provided."""
+        """Test f computes f_mean when not provided."""
         var = LinearVariable(
             name="X",
             sigma=sigma,
@@ -200,8 +201,8 @@ class TestLinearVariable:
         u = torch.tensor([0.5, -0.5])
         result = var.f({"Z": z}, u)
 
-        f_bar = intercept + coef_z * z
-        expected = f_bar + sigma * u
+        f_mean = intercept + coef_z * z
+        expected = f_mean + sigma * u
         assert torch.allclose(result, expected)
 
     @pytest.mark.parametrize("intercept", [5.0, 0.0, -3.0])
@@ -270,3 +271,31 @@ class TestLinearVariable:
                 parent_names=parent_names,
                 coefs=coefs,
             )
+
+
+class TestFunctionalVariable:
+    """Tests for FunctionalVariable class."""
+
+    def test_f_mean_no_parents(self) -> None:
+        """Test f_mean returns mean function output with no parents."""
+        var = FunctionalVariable(
+            name="X",
+            sigma=1.0,
+            f_mean=lambda _: torch.tensor(2.0),
+        )
+
+        result = var.f_mean({})
+        assert result == 2.0
+
+    def test_f_mean_with_parents(self) -> None:
+        """Test f_mean computes a nonlinear transform of parents."""
+        var = FunctionalVariable(
+            name="Y",
+            sigma=1.0,
+            parent_names=["X"],
+            f_mean=lambda parents: torch.sin(parents["X"]),
+        )
+
+        x = torch.tensor([0.0, 1.0])
+        result = var.f_mean({"X": x})
+        assert torch.allclose(result, torch.sin(x))
