@@ -216,6 +216,3 @@ class TestRandomSEM:
         assert any(
             isinstance(var, FunctionalVariable) for var in sem._variables.values()
         )
-
-
-
