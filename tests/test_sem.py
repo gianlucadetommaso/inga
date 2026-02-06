@@ -4,6 +4,7 @@ import torch
 import pytest
 from steindag.variable.linear import LinearVariable
 from steindag.sem.base import SEM
+from steindag.sem.random import RandomSEMConfig, random_sem
 
 
 @pytest.fixture
@@ -164,3 +165,54 @@ class TestSEMPosterior:
 
         with pytest.raises(ValueError, match="fit"):
             sem.posterior.sample(10)
+
+
+class TestRandomSEM:
+    """Tests for random SEM generation."""
+
+    def test_random_sem_generates_dag(self) -> None:
+        """Ensure random SEM respects DAG ordering."""
+        config = RandomSEMConfig(num_variables=6, parent_prob=0.6, seed=123)
+        sem = random_sem(config)
+        assert len(sem._variables) == 6
+
+        for idx, (name, variable) in enumerate(sem._variables.items()):
+            allowed_parents = {f"X{i}" for i in range(idx)}
+            assert set(variable.parent_names).issubset(allowed_parents)
+
+    def test_random_sem_reproducible(self) -> None:
+        """Ensure the random SEM is reproducible with a seed."""
+        config = RandomSEMConfig(num_variables=4, parent_prob=0.5, seed=99)
+        sem1 = random_sem(config)
+        sem2 = random_sem(config)
+
+        for (name1, var1), (name2, var2) in zip(
+            sem1._variables.items(), sem2._variables.items()
+        ):
+            assert name1 == name2
+            assert var1.parent_names == var2.parent_names
+
+    def test_random_sem_rejects_invalid_prob(self) -> None:
+        """Ensure invalid parent probabilities raise errors."""
+        with pytest.raises(ValueError, match="parent_prob"):
+            random_sem(RandomSEMConfig(num_variables=3, parent_prob=1.5))
+
+    def test_random_sem_rejects_non_positive_size(self) -> None:
+        """Ensure invalid num_variables raises errors."""
+        with pytest.raises(ValueError, match="num_variables"):
+            random_sem(RandomSEMConfig(num_variables=0))
+
+    def test_random_sem_includes_nonlinear_variables(self) -> None:
+        """Ensure nonlinear option creates at least one FunctionalVariable when forced."""
+        from steindag.variable.functional import FunctionalVariable
+
+        config = RandomSEMConfig(
+            num_variables=4,
+            parent_prob=0.7,
+            nonlinear_prob=1.0,
+            seed=7,
+        )
+        sem = random_sem(config)
+        assert any(
+            isinstance(var, FunctionalVariable) for var in sem._variables.values()
+        )

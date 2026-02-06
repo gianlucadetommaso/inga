@@ -69,7 +69,7 @@ class LinearVariable(Variable):
         self._coefs = coefs
         self._intercept = intercept
 
-    def f_bar(self, parents: dict[str, Tensor]) -> Tensor:
+    def f_mean(self, parents: dict[str, Tensor]) -> Tensor:
         """Compute the linear mean function.
 
         Args:
@@ -81,8 +81,8 @@ class LinearVariable(Variable):
         if not parents:
             return torch.tensor(self._intercept)
 
-        f_bar: Tensor | float = self._intercept
+        f_mean: Tensor | float = self._intercept
         for parent_name, parent in parents.items():
-            f_bar = f_bar + self._coefs[parent_name] * parent
+            f_mean = f_mean + self._coefs[parent_name] * parent
 
-        return f_bar  # type: ignore[return-value]
+        return f_mean  # type: ignore[return-value]

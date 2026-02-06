@@ -8,7 +8,7 @@ COMMANDS: dict[str, tuple[list[str], str]] = {
     "fmt": (["ruff", "format", "."], "Format"),
     "lint": (["ruff", "check", "--fix", "."], "Lint fix"),
     "typecheck": (["mypy", "steindag", "tests"], "Type check"),
-    "test": (["python", "-m", "pytest", "tests", "-v"], "Tests"),
+    "test": ([sys.executable, "-m", "pytest", "tests", "-v"], "Tests"),
 }
 
 

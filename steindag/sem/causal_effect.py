@@ -133,7 +133,7 @@ class CausalEffectMixin:
                 latent_per_obs: dict[str, Tensor],
                 observed_per_obs: dict[str, Tensor],
             ) -> Tensor:
-                outcome_mean_fn = partial(
+                outcome_f_mean = partial(
                     self._compute_outcome_mean_under_intervention,
                     latent=latent_per_obs,
                     observed=self._exclude_keys(
@@ -145,7 +145,7 @@ class CausalEffectMixin:
                     treatment_name=treatment_name,
                     outcome_name=outcome_name,
                 )
-                return grad(outcome_mean_fn)(observed_per_obs[treatment_name])
+                return grad(outcome_f_mean)(observed_per_obs[treatment_name])
 
             return compute_effect_per_observation(latent_sample, observed)
 
@@ -236,16 +236,16 @@ class CausalEffectMixin:
             if name == treatment_name:
                 values[name] = treatment
             elif name == outcome_name:
-                return variable.f_bar(parents)
+                return variable.f_mean(parents)
             elif name in observed:
                 values[name] = observed[name]
             elif name in mediator_observed:
                 # Compute noise from observed mediator value (detached from gradient)
                 # and use it to reconstruct the counterfactual mediator under intervention.
-                # The noise is detached so the gradient flows only through f_bar.
-                f_bar = variable.f_bar(parents)
-                noise = ((mediator_observed[name] - f_bar) / variable.sigma).detach()
-                values[name] = variable.f(parents, noise, f_bar=f_bar)
+                # The noise is detached so the gradient flows only through f_mean.
+                f_mean = variable.f_mean(parents)
+                noise = ((mediator_observed[name] - f_mean) / variable.sigma).detach()
+                values[name] = variable.f(parents, noise, f_mean=f_mean)
             else:
                 values[name] = variable.f(parents, latent[name])
 

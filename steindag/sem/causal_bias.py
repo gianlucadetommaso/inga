@@ -145,14 +145,14 @@ class CausalBiasMixin(CausalEffectMixin):
         if observed_name == treatment_name:
             return -torch.ones_like(observed[treatment_name])
 
-        fv_bar_x = partial(
+        f_mean_x = partial(
             self._compute_target_mean,
             latent=latent,
             observed=observed,
             treatment_name=treatment_name,
             target_name=observed_name,
         )
-        return grad(fv_bar_x)(observed[treatment_name])
+        return grad(f_mean_x)(observed[treatment_name])
 
     def _compute_du_fy(
         self,
@@ -163,7 +163,7 @@ class CausalBiasMixin(CausalEffectMixin):
         observed: dict[str, Tensor],
     ) -> Tensor:
         """Compute derivative of outcome mean w.r.t. observed variable noise."""
-        fy_bar_u = partial(
+        f_mean_u = partial(
             self._compute_outcome_mean_from_noise,
             latent=latent,
             observed=observed,
@@ -172,7 +172,7 @@ class CausalBiasMixin(CausalEffectMixin):
             outcome_name=outcome_name,
         )
         noise = self._get_u_observed(latent, observed, observed_name)
-        return grad(fy_bar_u)(noise)
+        return grad(f_mean_u)(noise)
 
     def _compute_target_mean(
         self,
@@ -188,7 +188,7 @@ class CausalBiasMixin(CausalEffectMixin):
             parents = self._get_parent_values(variable, values)
 
             if name == target_name:
-                return variable.f_bar(parents)
+                return variable.f_mean(parents)
             if name == treatment_name:
                 values[name] = treatment
             elif name in observed:
@@ -209,14 +209,14 @@ class CausalBiasMixin(CausalEffectMixin):
 
         for name, variable in self._variables.items():
             parents = self._get_parent_values(variable, values)
-            f_bar = variable.f_bar(parents)
+            f_mean = variable.f_mean(parents)
 
             if name in observed:
                 if name == observed_name:
-                    return (observed[name] - f_bar) / variable.sigma
+                    return (observed[name] - f_mean) / variable.sigma
                 values[name] = observed[name]
             else:
-                values[name] = variable.f(parents, latent[name], f_bar)
+                values[name] = variable.f(parents, latent[name], f_mean)
 
         raise ValueError(f"Observed variable '{observed_name}' not found in the SEM.")
 
@@ -273,9 +273,9 @@ class CausalBiasMixin(CausalEffectMixin):
             parents = self._get_parent_values(variable, values)
 
             if name in observed:
-                f_bar = variable.f_bar(parents)
+                f_mean = variable.f_mean(parents)
                 if name == observed_name:
-                    u_observed = (observed[name] - f_bar) / variable.sigma
+                    u_observed = (observed[name] - f_mean) / variable.sigma
                 values[name] = observed[name]
             else:
                 values[name] = variable.f(parents, latent[name])
@@ -306,7 +306,7 @@ class CausalBiasMixin(CausalEffectMixin):
             parents = self._get_parent_values(variable, values)
 
             if name == outcome_name:
-                return variable.f_bar(parents)
+                return variable.f_mean(parents)
 
             if name == treatment_name:
                 values[name] = observed[treatment_name]
@@ -315,8 +315,8 @@ class CausalBiasMixin(CausalEffectMixin):
             elif name in latent:
                 values[name] = variable.f(parents, latent[name])
             else:
-                f_bar = variable.f_bar(parents)
-                residual = ((observed[name] - f_bar) / variable.sigma).detach()
-                values[name] = variable.f(parents, residual, f_bar=f_bar)
+                f_mean = variable.f_mean(parents)
+                residual = ((observed[name] - f_mean) / variable.sigma).detach()
+                values[name] = variable.f(parents, residual, f_mean=f_mean)
 
         raise ValueError(f"Outcome variable '{outcome_name}' not found in the SEM.")

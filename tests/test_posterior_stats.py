@@ -137,7 +137,7 @@ class TestCausalBiasComponents:
 
         u_x = sem._get_u_observed(u_latent, obs, "X")
 
-        fy_bar_u = partial(
+        f_mean_u = partial(
             sem._compute_outcome_mean_from_noise,
             latent=u_latent,
             observed=obs,
@@ -145,7 +145,7 @@ class TestCausalBiasComponents:
             treatment_name="X",
             outcome_name="Y",
         )
-        du_fy = grad(fy_bar_u)(u_x)
+        du_fy = grad(f_mean_u)(u_x)
 
         assert torch.allclose(du_fy, torch.tensor(0.0), atol=1e-5), (
             f"du_fy should be 0 for treatment variable, got {du_fy}"
@@ -565,7 +565,7 @@ class TestEndogenousSelectionModel:
         obs = {k: v[0] for k, v in observed.items()}
 
         u_x = endogenous_selection_sem._get_u_observed(u_latent, obs, "X")
-        fy_bar_u = partial(
+        f_mean_u = partial(
             endogenous_selection_sem._compute_outcome_mean_from_noise,
             latent=u_latent,
             observed=obs,
@@ -573,7 +573,7 @@ class TestEndogenousSelectionModel:
             treatment_name="X",
             outcome_name="Y",
         )
-        du_fy = grad(fy_bar_u)(u_x)
+        du_fy = grad(f_mean_u)(u_x)
 
         assert torch.allclose(du_fy, torch.tensor(0.0), atol=1e-5), (
             f"du_fy should be 0 when observing X, got {du_fy}"
@@ -639,14 +639,14 @@ class TestEndogenousSelectionModel:
         u_latent = {k: v[0, 0] for k, v in u_latent_samples.items()}
         obs = {k: v[0] for k, v in observed.items()}
 
-        fv_bar_x = partial(
+        f_mean_x = partial(
             endogenous_selection_sem._compute_target_mean,
             latent=u_latent,
             observed=obs,
             treatment_name="X",
             target_name="V",
         )
-        dx_diff = grad(fv_bar_x)(obs["X"])
+        dx_diff = grad(f_mean_x)(obs["X"])
 
         expected_dx_diff = beta + gamma * alpha
 
@@ -678,7 +678,7 @@ class TestEndogenousSelectionModel:
 
         u_v = endogenous_selection_sem._get_u_observed(u_latent, obs, "V")
 
-        fy_bar_u = partial(
+        f_mean_u = partial(
             endogenous_selection_sem._compute_outcome_mean_from_noise,
             latent=u_latent,
             observed=obs,
@@ -686,7 +686,7 @@ class TestEndogenousSelectionModel:
             treatment_name="X",
             outcome_name="Y",
         )
-        du_fy = grad(fy_bar_u)(u_v)
+        du_fy = grad(f_mean_u)(u_v)
 
         assert torch.allclose(du_fy, torch.tensor(0.0), atol=1e-5), (
             f"du_fy should be 0 when observing V, got {du_fy}"
@@ -703,7 +703,7 @@ class TestEndogenousSelectionModel:
         contribution through V. Its expected value should equal gamma / (1 + gamma^2).
 
         The mid_term formula is: -(Y_sample - Y_mean) * u_V
-        where u_V = V - f_bar_V is the normalized residual of V.
+        where u_V = V - f_mean_V is the normalized residual of V.
 
         For the linear case, E[mid_term] = gamma * Var[u_Y | X, V] = gamma / (1 + gamma^2).
         """

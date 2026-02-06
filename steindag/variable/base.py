@@ -9,7 +9,7 @@ class Variable:
     """A variable in a structural equation model.
 
     A variable is defined by its name, parent variables, and noise standard deviation.
-    The variable value is computed as f_bar(parents) + sigma * u, where u is a noise term.
+    The variable value is computed as f_mean(parents) + sigma * u, where u is a noise term.
 
     Attributes:
         name: The variable's identifier.
@@ -32,24 +32,24 @@ class Variable:
         self.sigma = sigma
 
     def f(
-        self, parents: dict[str, Tensor], u: Tensor, f_bar: Tensor | None = None
+        self, parents: dict[str, Tensor], u: Tensor, f_mean: Tensor | None = None
     ) -> Tensor:
         """Compute the variable value given parents and noise.
 
         Args:
             parents: Dictionary mapping parent names to their tensor values.
             u: Noise tensor.
-            f_bar: Optional precomputed mean function value. If None, it will be computed.
+            f_mean: Optional precomputed mean function value. If None, it will be computed.
 
         Returns:
-            The variable value: f_bar(parents) + sigma * u.
+            The variable value: f_mean(parents) + sigma * u.
         """
-        if f_bar is None:
-            f_bar = self.f_bar(parents)
-        return f_bar + self.sigma * u
+        if f_mean is None:
+            f_mean = self.f_mean(parents)
+        return f_mean + self.sigma * u
 
     @abstractmethod
-    def f_bar(self, parents: dict[str, Tensor]) -> Tensor:
+    def f_mean(self, parents: dict[str, Tensor]) -> Tensor:
         """Compute the mean function (expected value given parents).
 
         Args:
