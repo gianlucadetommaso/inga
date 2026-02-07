@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import torch
-from torch import Tensor, vmap, no_grad
+from torch import Tensor, vmap
 from torch.func import grad
 from functools import partial
 from typing import TYPE_CHECKING, Callable
@@ -36,6 +36,7 @@ class CausalBiasMixin(CausalEffectMixin):
         outcome_name: str,
         num_samples: int = 1000,
         conditional_mean_fn: Callable[[dict[str, Tensor]], Tensor] | None = None,
+        enable_grad: bool = False,
     ) -> Tensor:
         return self._compute_causal_bias_samples(
             observed=observed,
@@ -43,6 +44,7 @@ class CausalBiasMixin(CausalEffectMixin):
             outcome_name=outcome_name,
             num_samples=num_samples,
             conditional_mean_fn=conditional_mean_fn,
+            enable_grad=enable_grad,
         ).mean(dim=1)
 
     def causal_bias_var(
@@ -52,6 +54,7 @@ class CausalBiasMixin(CausalEffectMixin):
         outcome_name: str,
         num_samples: int = 1000,
         conditional_mean_fn: Callable[[dict[str, Tensor]], Tensor] | None = None,
+        enable_grad: bool = False,
     ) -> Tensor:
         return self._compute_causal_bias_samples(
             observed=observed,
@@ -59,9 +62,9 @@ class CausalBiasMixin(CausalEffectMixin):
             outcome_name=outcome_name,
             num_samples=num_samples,
             conditional_mean_fn=conditional_mean_fn,
+            enable_grad=enable_grad,
         ).var(dim=1)
 
-    @no_grad()
     def _compute_causal_bias_samples(
         self,
         observed: dict[str, Tensor],
@@ -69,6 +72,7 @@ class CausalBiasMixin(CausalEffectMixin):
         outcome_name: str,
         num_samples: int = 1000,
         conditional_mean_fn: Callable[[dict[str, Tensor]], Tensor] | None = None,
+        enable_grad: bool = False,
     ) -> Tensor:
         """Compute causal bias samples for each observation.
 
@@ -84,63 +88,125 @@ class CausalBiasMixin(CausalEffectMixin):
         """
         self._validate_causal_query(observed, treatment_name, outcome_name)
 
-        latent_samples = self.posterior.sample(num_samples)
-        if conditional_mean_fn is None:
-            outcome_means = self._compute_conditional_outcome_mean(
-                latent_samples, observed, outcome_name
-            )
-        else:
-            outcome_means = conditional_mean_fn(observed)
-
-        bias_samples = torch.zeros(
-            observed[treatment_name].shape[0], num_samples, device=outcome_means.device
-        )
-
-        for observed_name in observed:
-
-            @partial(vmap, in_dims=1, out_dims=0)
-            def bias_contrib_per_sample(
-                latent_sample: dict[str, Tensor],
-            ) -> Tensor:
-                @vmap
-                def bias_contrib_per_observation(
-                    latent_per_obs: dict[str, Tensor],
-                    observed_per_obs: dict[str, Tensor],
-                    outcome_mean: Tensor,
-                ) -> Tensor:
-                    dx_diff = self._compute_dx_diff(
-                        observed_name=observed_name,
-                        treatment_name=treatment_name,
-                        latent=latent_per_obs,
-                        observed=observed_per_obs,
-                    )
-
-                    du_fy = self._compute_du_fy(
-                        observed_name=observed_name,
-                        treatment_name=treatment_name,
-                        outcome_name=outcome_name,
-                        latent=latent_per_obs,
-                        observed=observed_per_obs,
-                    )
-
-                    mid_term = self._compute_mid_term(
-                        latent=latent_per_obs,
-                        observed=observed_per_obs,
-                        outcome_mean=outcome_mean,
-                        observed_name=observed_name,
-                        outcome_name=outcome_name,
-                    )
-
-                    sigma = self._variables[observed_name].sigma
-                    return -(du_fy + mid_term) * dx_diff / sigma
-
-                return bias_contrib_per_observation(
-                    latent_sample, observed, outcome_means
+        context = torch.enable_grad() if enable_grad else torch.no_grad()
+        with context:
+            if enable_grad:
+                map_rav = self.posterior.state.MAP_rav
+                if map_rav is None:
+                    raise ValueError("Posterior state is unavailable; call fit().")
+                latent_samples = self.posterior._unravel(
+                    map_rav, self.posterior.state.latent_names
                 )
+                if conditional_mean_fn is None:
+                    outcome_means = self._compute_conditional_outcome_mean(
+                        {
+                            name: values.unsqueeze(1)
+                            for name, values in latent_samples.items()
+                        },
+                        observed,
+                        outcome_name,
+                    )
+                else:
+                    outcome_means = conditional_mean_fn(observed)
 
-            bias_samples += bias_contrib_per_sample(latent_samples).T
+                num_obs = observed[treatment_name].shape[0]
+                bias_samples = torch.zeros(
+                    num_obs,
+                    1,
+                    device=outcome_means.device,
+                )
+                for idx in range(num_obs):
+                    latent_per_obs = {k: v[idx] for k, v in latent_samples.items()}
+                    observed_per_obs = {k: v[idx] for k, v in observed.items()}
+                    outcome_mean = outcome_means[idx]
+                    bias_value = torch.zeros((), device=outcome_means.device)
+                    for observed_name in observed:
+                        dx_diff = self._compute_dx_diff(
+                            observed_name=observed_name,
+                            treatment_name=treatment_name,
+                            latent=latent_per_obs,
+                            observed=observed_per_obs,
+                        )
+                        du_fy = self._compute_du_fy(
+                            observed_name=observed_name,
+                            treatment_name=treatment_name,
+                            outcome_name=outcome_name,
+                            latent=latent_per_obs,
+                            observed=observed_per_obs,
+                        )
+                        mid_term = self._compute_mid_term(
+                            latent=latent_per_obs,
+                            observed=observed_per_obs,
+                            outcome_mean=outcome_mean,
+                            observed_name=observed_name,
+                            outcome_name=outcome_name,
+                        )
+                        sigma = self._variables[observed_name].sigma
+                        bias_value = bias_value + (
+                            -(du_fy + mid_term) * dx_diff / sigma
+                        )
+                    bias_samples[idx, 0] = bias_value
+                return bias_samples
 
-        return bias_samples
+            latent_samples = self.posterior.sample(num_samples)
+            if conditional_mean_fn is None:
+                outcome_means = self._compute_conditional_outcome_mean(
+                    latent_samples, observed, outcome_name
+                )
+            else:
+                outcome_means = conditional_mean_fn(observed)
+
+            bias_samples = torch.zeros(
+                observed[treatment_name].shape[0],
+                num_samples,
+                device=outcome_means.device,
+            )
+
+            for observed_name in observed:
+
+                @partial(vmap, in_dims=1, out_dims=0)
+                def bias_contrib_per_sample(
+                    latent_sample: dict[str, Tensor],
+                ) -> Tensor:
+                    @vmap
+                    def bias_contrib_per_observation(
+                        latent_per_obs: dict[str, Tensor],
+                        observed_per_obs: dict[str, Tensor],
+                        outcome_mean: Tensor,
+                    ) -> Tensor:
+                        dx_diff = self._compute_dx_diff(
+                            observed_name=observed_name,
+                            treatment_name=treatment_name,
+                            latent=latent_per_obs,
+                            observed=observed_per_obs,
+                        )
+
+                        du_fy = self._compute_du_fy(
+                            observed_name=observed_name,
+                            treatment_name=treatment_name,
+                            outcome_name=outcome_name,
+                            latent=latent_per_obs,
+                            observed=observed_per_obs,
+                        )
+
+                        mid_term = self._compute_mid_term(
+                            latent=latent_per_obs,
+                            observed=observed_per_obs,
+                            outcome_mean=outcome_mean,
+                            observed_name=observed_name,
+                            outcome_name=outcome_name,
+                        )
+
+                        sigma = self._variables[observed_name].sigma
+                        return -(du_fy + mid_term) * dx_diff / sigma
+
+                    return bias_contrib_per_observation(
+                        latent_sample, observed, outcome_means
+                    )
+
+                bias_samples += bias_contrib_per_sample(latent_samples).T
+
+            return bias_samples
 
     def _compute_dx_diff(
         self,

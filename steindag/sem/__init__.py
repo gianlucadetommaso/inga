@@ -10,6 +10,7 @@ from steindag.sem.dataset import (
     generate_sem_dataset,
     load_sem_dataset,
 )
+from steindag.sem.regularizer import CausalRegularizer
 
 __all__ = [
     "SEM",
@@ -21,4 +22,5 @@ __all__ = [
     "SEMDatasetConfig",
     "generate_sem_dataset",
     "load_sem_dataset",
+    "CausalRegularizer",
 ]

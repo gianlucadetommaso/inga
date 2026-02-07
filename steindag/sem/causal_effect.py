@@ -27,6 +27,7 @@ class CausalEffectMixin:
         treatment_name: str,
         outcome_name: str,
         num_samples: int = 1000,
+        posterior_samples: dict[str, Tensor] | None = None,
     ) -> Tensor:
         """Compute the causal effect of treatment on outcome.
 
@@ -55,6 +56,7 @@ class CausalEffectMixin:
             treatment_name=treatment_name,
             outcome_name=outcome_name,
             num_samples=num_samples,
+            posterior_samples=posterior_samples,
         ).mean(dim=1)
 
     def causal_effect_var(
@@ -63,6 +65,7 @@ class CausalEffectMixin:
         treatment_name: str,
         outcome_name: str,
         num_samples: int = 1000,
+        posterior_samples: dict[str, Tensor] | None = None,
     ) -> Tensor:
         """Compute the variance of the causal effect estimate.
 
@@ -90,6 +93,7 @@ class CausalEffectMixin:
             treatment_name=treatment_name,
             outcome_name=outcome_name,
             num_samples=num_samples,
+            posterior_samples=posterior_samples,
         ).var(dim=1)
 
     @no_grad()
@@ -99,6 +103,7 @@ class CausalEffectMixin:
         treatment_name: str,
         outcome_name: str,
         num_samples: int = 1000,
+        posterior_samples: dict[str, Tensor] | None = None,
     ) -> Tensor:
         """Compute causal effect samples for each observation.
 
@@ -123,7 +128,11 @@ class CausalEffectMixin:
         """
         self._validate_causal_query(observed, treatment_name, outcome_name)
 
-        latent_samples = self.posterior.sample(num_samples)
+        latent_samples = (
+            posterior_samples
+            if posterior_samples is not None
+            else self.posterior.sample(num_samples)
+        )
         mediator_names = self._find_mediators(observed, treatment_name, outcome_name)
 
         @partial(vmap, in_dims=1, out_dims=0)

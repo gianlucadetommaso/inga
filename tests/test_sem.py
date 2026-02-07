@@ -5,6 +5,7 @@ import pytest
 from steindag.variable.linear import LinearVariable
 from steindag.sem.base import SEM
 from steindag.sem.random import RandomSEMConfig, random_sem
+from steindag.sem.regularizer import CausalRegularizer
 
 
 @pytest.fixture
@@ -216,3 +217,50 @@ class TestRandomSEM:
         assert any(
             isinstance(var, FunctionalVariable) for var in sem._variables.values()
         )
+
+
+class TestCausalRegularizer:
+    """Tests for causal regularizer behavior."""
+
+    def test_ravel_unravel_roundtrip(self, simple_sem: SEM) -> None:
+        """Ensure ravel/unravel keeps observed data consistent."""
+        observed = {
+            "Z": torch.tensor([1.0, 2.0]),
+            "X": torch.tensor([3.0, 4.0]),
+        }
+        regularizer = CausalRegularizer(
+            sem=simple_sem,
+            model=lambda x: x[:, 0],
+            observed_names=["Z", "X"],
+            treatment_name="X",
+            outcome_name="Z",
+        )
+        rav = regularizer.ravel_observed(observed)
+        restored = regularizer.unravel_observed(rav)
+        for name in observed:
+            assert torch.allclose(observed[name], restored[name])
+
+    def test_regularization_term_reduction(self, simple_sem: SEM) -> None:
+        """Check regularization reductions for absolute bias penalty."""
+        torch.manual_seed(0)
+        values = simple_sem.generate(5)
+        observed = {"X": values["X"]}
+        simple_sem.posterior.fit(observed)
+
+        regularizer = CausalRegularizer(
+            sem=simple_sem,
+            model=lambda x: torch.zeros(x.shape[0]),
+            observed_names=["X"],
+            treatment_name="X",
+            outcome_name="Z",
+        )
+
+        torch.manual_seed(1)
+        bias = regularizer.causal_bias(observed, num_samples=50)
+        penalty_none = bias.abs()
+        penalty_mean = penalty_none.mean()
+        penalty_sum = penalty_none.sum()
+
+        assert penalty_none.shape == observed["X"].shape
+        assert torch.isclose(penalty_mean, penalty_none.mean())
+        assert torch.isclose(penalty_sum, penalty_none.sum())

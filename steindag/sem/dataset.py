@@ -125,31 +125,32 @@ def generate_sem_dataset(config: SEMDatasetConfig) -> SEMDataset:
     data = sem.generate(config.num_samples)
     variable_names = list(sem._variables.keys())
 
-    queries = [
-        _sample_query(
+    queries = []
+    causal_effects: dict[tuple[str, str, tuple[str, ...]], Tensor] = {}
+    causal_biases: dict[tuple[str, str, tuple[str, ...]], Tensor] = {}
+
+    for _ in range(config.num_queries):
+        query = _sample_query(
             rng,
             variable_names=variable_names,
             min_observed=config.min_observed,
         )
-        for _ in range(config.num_queries)
-    ]
-
-    causal_effects: dict[tuple[str, str, tuple[str, ...]], Tensor] = {}
-    causal_biases: dict[tuple[str, str, tuple[str, ...]], Tensor] = {}
-
-    for query in queries:
         observed = {name: data[name] for name in query.observed_names}
         sem.posterior.fit(observed)
+
+        posterior_samples = sem.posterior.sample(1000)
         effect = sem.causal_effect(
             observed,
             treatment_name=query.treatment_name,
             outcome_name=query.outcome_name,
+            posterior_samples=posterior_samples,
         )
         bias = sem.causal_bias(
             observed,
             treatment_name=query.treatment_name,
             outcome_name=query.outcome_name,
         )
+
         key = (
             query.treatment_name,
             query.outcome_name,
@@ -157,6 +158,7 @@ def generate_sem_dataset(config: SEMDatasetConfig) -> SEMDataset:
         )
         causal_effects[key] = effect
         causal_biases[key] = bias
+        queries.append(query)
 
     return SEMDataset(
         sem=sem,
