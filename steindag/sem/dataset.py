@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import json
 from pathlib import Path
 import random
@@ -36,6 +36,7 @@ class SEMDataset:
     queries: list[CausalQueryConfig]
     causal_effects: dict[tuple[str, str, tuple[str, ...]], Tensor]
     causal_biases: dict[tuple[str, str, tuple[str, ...]], Tensor]
+    causal_regularizations: dict[tuple[str, str, tuple[str, ...]], Tensor]
 
     def save(self, path: str | Path) -> None:
         """Save dataset to disk (JSON metadata + tensor blob)."""
@@ -56,6 +57,9 @@ class SEMDataset:
                 [key[0], key[1], list(key[2])] for key in self.causal_effects
             ],
             "bias_keys": [[key[0], key[1], list(key[2])] for key in self.causal_biases],
+            "regularization_keys": [
+                [key[0], key[1], list(key[2])] for key in self.causal_regularizations
+            ],
         }
         base_path.with_suffix(".json").write_text(json.dumps(metadata, indent=2))
 
@@ -67,6 +71,8 @@ class SEMDataset:
             arrays[f"effect::{idx}"] = self.causal_effects[key]
         for idx, key in enumerate(self.causal_biases):
             arrays[f"bias::{idx}"] = self.causal_biases[key]
+        for idx, key in enumerate(self.causal_regularizations):
+            arrays[f"regularization::{idx}"] = self.causal_regularizations[key]
 
         torch.save(arrays, base_path.with_suffix(".pt"))
 
@@ -120,43 +126,71 @@ def generate_sem_dataset(config: SEMDatasetConfig) -> SEMDataset:
     if config.num_queries <= 0:
         raise ValueError("num_queries must be positive.")
 
-    rng = random.Random(config.seed)
-    sem = random_sem(config.sem_config)
-    data = sem.generate(config.num_samples)
-    variable_names = list(sem._variables.keys())
+    # Single user-facing seed policy:
+    # - if config.seed is provided, it drives both SEM sampling and query sampling
+    # - otherwise we fall back to sem_config.seed behavior for backward compatibility
+    master_seed = config.seed if config.seed is not None else config.sem_config.seed
 
-    queries = [
-        _sample_query(
-            rng,
-            variable_names=variable_names,
-            min_observed=config.min_observed,
-        )
-        for _ in range(config.num_queries)
-    ]
+    sem_config = (
+        config.sem_config
+        if config.seed is None
+        else replace(config.sem_config, seed=config.seed)
+    )
 
-    causal_effects: dict[tuple[str, str, tuple[str, ...]], Tensor] = {}
-    causal_biases: dict[tuple[str, str, tuple[str, ...]], Tensor] = {}
+    rng = random.Random(master_seed)
 
-    for query in queries:
-        observed = {name: data[name] for name in query.observed_names}
-        sem.posterior.fit(observed)
-        effect = sem.causal_effect(
-            observed,
-            treatment_name=query.treatment_name,
-            outcome_name=query.outcome_name,
-        )
-        bias = sem.causal_bias(
-            observed,
-            treatment_name=query.treatment_name,
-            outcome_name=query.outcome_name,
-        )
-        key = (
-            query.treatment_name,
-            query.outcome_name,
-            tuple(query.observed_names),
-        )
-        causal_effects[key] = effect
-        causal_biases[key] = bias
+    # Make torch-driven sampling deterministic from the same master seed, while
+    # preserving the caller's global RNG state.
+    torch_state = torch.random.get_rng_state()
+    try:
+        if master_seed is not None:
+            torch.manual_seed(master_seed)
+
+        sem = random_sem(sem_config)
+        data = sem.generate(config.num_samples)
+        variable_names = list(sem._variables.keys())
+
+        queries = [
+            _sample_query(
+                rng,
+                variable_names=variable_names,
+                min_observed=config.min_observed,
+            )
+            for _ in range(config.num_queries)
+        ]
+
+        causal_effects: dict[tuple[str, str, tuple[str, ...]], Tensor] = {}
+        causal_biases: dict[tuple[str, str, tuple[str, ...]], Tensor] = {}
+        causal_regularizations: dict[tuple[str, str, tuple[str, ...]], Tensor] = {}
+
+        for query in queries:
+            observed = {name: data[name] for name in query.observed_names}
+            sem.posterior.fit(observed)
+            effect = sem.causal_effect(
+                observed,
+                treatment_name=query.treatment_name,
+                outcome_name=query.outcome_name,
+            )
+            bias = sem.causal_bias(
+                observed,
+                treatment_name=query.treatment_name,
+                outcome_name=query.outcome_name,
+            )
+            regularization = sem.causal_regularization(
+                observed,
+                treatment_name=query.treatment_name,
+                outcome_name=query.outcome_name,
+            )
+            key = (
+                query.treatment_name,
+                query.outcome_name,
+                tuple(query.observed_names),
+            )
+            causal_effects[key] = effect
+            causal_biases[key] = bias
+            causal_regularizations[key] = regularization
+    finally:
+        torch.random.set_rng_state(torch_state)
 
     return SEMDataset(
         sem=sem,
@@ -164,6 +198,7 @@ def generate_sem_dataset(config: SEMDatasetConfig) -> SEMDataset:
         queries=queries,
         causal_effects=causal_effects,
         causal_biases=causal_biases,
+        causal_regularizations=causal_regularizations,
     )
 
 
@@ -197,6 +232,10 @@ def load_sem_dataset(path: str | Path) -> SEMDataset:
         (key[0], key[1], tuple(key[2])): arrays[f"bias::{idx}"]
         for idx, key in enumerate(metadata["bias_keys"])
     }
+    causal_regularizations = {
+        (key[0], key[1], tuple(key[2])): arrays[f"regularization::{idx}"]
+        for idx, key in enumerate(metadata["regularization_keys"])
+    }
 
     return SEMDataset(
         sem=sem,
@@ -204,6 +243,7 @@ def load_sem_dataset(path: str | Path) -> SEMDataset:
         queries=queries,
         causal_effects=causal_effects,
         causal_biases=causal_biases,
+        causal_regularizations=causal_regularizations,
     )
 
 

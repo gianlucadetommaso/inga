@@ -181,7 +181,7 @@ class TestCausalBiasComponents:
             for j in range(num_samples):
                 u_latent = {k: v[i, j] for k, v in u_latent_samples.items()}
                 obs = {k: v[i] for k, v in observed.items()}
-                mid_term = sem._compute_mid_term(
+                mid_term = sem._compute_bias_mid_term(
                     u_latent,
                     obs,
                     outcome_mean=outcome_means[i],
@@ -263,6 +263,56 @@ class TestCausalBiasComponents:
         assert torch.allclose(causal_bias, expected_causal_bias, atol=0.2), (
             f"Causal bias should equal gamma*alpha/(1+alpha^2)={gamma * alpha / (1 + alpha**2)}, got {causal_bias}"
         )
+
+    def test_causal_regularization_is_sample_mean(
+        self, sem: SEM, values: dict[str, Tensor]
+    ) -> None:
+        """Test that causal_regularization equals mean of its sample tensor over dim=1."""
+        observed: dict[str, Tensor] = {"X": values["X"]}
+        sem.posterior.fit(observed)
+
+        torch.manual_seed(0)
+        reg_samples = sem._compute_causal_regularization_samples(
+            observed=observed,
+            treatment_name="X",
+            outcome_name="Y",
+            num_samples=256,
+        )
+
+        torch.manual_seed(0)
+        reg = sem.causal_regularization(
+            observed=observed,
+            treatment_name="X",
+            outcome_name="Y",
+            num_samples=256,
+        )
+
+        assert torch.allclose(reg, reg_samples.mean(dim=1), atol=1e-6)
+
+    def test_causal_regularization_samples_differ_from_bias_samples(
+        self, sem: SEM, values: dict[str, Tensor]
+    ) -> None:
+        """Test that regularization samples are not identical to bias samples."""
+        observed: dict[str, Tensor] = {"X": values["X"]}
+        sem.posterior.fit(observed)
+
+        torch.manual_seed(0)
+        bias_samples = sem._compute_causal_bias_samples(
+            observed=observed,
+            treatment_name="X",
+            outcome_name="Y",
+            num_samples=256,
+        )
+
+        torch.manual_seed(0)
+        reg_samples = sem._compute_causal_regularization_samples(
+            observed=observed,
+            treatment_name="X",
+            outcome_name="Y",
+            num_samples=256,
+        )
+
+        assert not torch.allclose(bias_samples, reg_samples)
 
     def test_posterior_stats_observe_x_and_y(
         self, sem: SEM, values: dict[str, Tensor]
@@ -594,7 +644,7 @@ class TestEndogenousSelectionModel:
             for j in range(num_samples):
                 u_latent = {k: v[i, j] for k, v in u_latent_samples.items()}
                 obs = {k: v[i] for k, v in observed.items()}
-                mid_term = endogenous_selection_sem._compute_mid_term(
+                mid_term = endogenous_selection_sem._compute_bias_mid_term(
                     u_latent,
                     obs,
                     outcome_mean=outcome_means[i],
@@ -732,7 +782,7 @@ class TestEndogenousSelectionModel:
             for j in range(num_samples):
                 u_latent = {k: v[i, j] for k, v in u_latent_samples.items()}
                 obs = {k: v[i] for k, v in observed.items()}
-                mid_term = endogenous_selection_sem._compute_mid_term(
+                mid_term = endogenous_selection_sem._compute_bias_mid_term(
                     u_latent,
                     obs,
                     outcome_mean=outcome_means[i],

@@ -38,10 +38,12 @@ class TestSEMDataset:
 
         assert len(dataset.causal_effects) == config.num_queries
         assert len(dataset.causal_biases) == config.num_queries
+        assert len(dataset.causal_regularizations) == config.num_queries
 
         for key, effect in dataset.causal_effects.items():
             assert effect.shape == (config.num_samples,)
             assert key in dataset.causal_biases
+            assert key in dataset.causal_regularizations
 
     def test_invalid_dataset_config(self) -> None:
         """Ensure invalid configs raise errors."""
@@ -87,3 +89,44 @@ class TestSEMDataset:
             assert torch.allclose(effect, loaded.causal_effects[key])
         for key, bias in dataset.causal_biases.items():
             assert torch.allclose(bias, loaded.causal_biases[key])
+        for key, regularization in dataset.causal_regularizations.items():
+            assert torch.allclose(
+                regularization, loaded.causal_regularizations[key]
+            )
+
+    def test_dataset_single_seed_drives_sem_and_queries(self) -> None:
+        """Ensure one dataset seed is enough for deterministic SEM + queries.
+
+        If sem_config.seed differs but dataset seed is equal, generation should
+        still be deterministic and identical because dataset seed takes priority.
+        """
+        config_a = SEMDatasetConfig(
+            sem_config=RandomSEMConfig(num_variables=5, parent_prob=0.5, seed=11),
+            num_samples=120,
+            num_queries=3,
+            min_observed=1,
+            seed=1234,
+        )
+        config_b = SEMDatasetConfig(
+            sem_config=RandomSEMConfig(num_variables=5, parent_prob=0.5, seed=999),
+            num_samples=120,
+            num_queries=3,
+            min_observed=1,
+            seed=1234,
+        )
+
+        ds_a = generate_sem_dataset(config_a)
+        ds_b = generate_sem_dataset(config_b)
+
+        assert ds_a.queries == ds_b.queries
+        assert list(ds_a.sem._variables.keys()) == list(ds_b.sem._variables.keys())
+
+        for name in ds_a.data:
+            assert torch.allclose(ds_a.data[name], ds_b.data[name])
+
+        for key in ds_a.causal_effects:
+            assert torch.allclose(ds_a.causal_effects[key], ds_b.causal_effects[key])
+            assert torch.allclose(ds_a.causal_biases[key], ds_b.causal_biases[key])
+            assert torch.allclose(
+                ds_a.causal_regularizations[key], ds_b.causal_regularizations[key]
+            )
