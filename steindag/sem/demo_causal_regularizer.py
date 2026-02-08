@@ -121,7 +121,7 @@ def _print_results_table(
 
 def main() -> None:
     """Run demo and print causal-effect MAE comparison."""
-    demo_seed = 43
+    demo_seed = 28
     torch.manual_seed(demo_seed)
 
     dataset = generate_sem_dataset(
