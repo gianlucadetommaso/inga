@@ -88,8 +88,12 @@ class CausalBiasMixin(CausalEffectMixin):
     ) -> Tensor:
         """Compute the expected causal regularization term.
 
-        This averages causal regularization samples over the posterior-sample
-        dimension (dimension 1).
+        This computes a ratio-of-means estimator:
+
+            sum_o E[num_o] / (sum_o E[den_o] + eps)
+
+        where `o` runs over observed variables, and expectations are taken
+        over posterior samples.
 
         Args:
             observed: Dictionary mapping observed variable names to their values.
@@ -100,12 +104,28 @@ class CausalBiasMixin(CausalEffectMixin):
         Returns:
             Tensor of shape (num_observations,) with causal regularization values.
         """
-        return self._compute_causal_regularization_samples(
-            observed=observed,
-            treatment_name=treatment_name,
-            outcome_name=outcome_name,
-            num_samples=num_samples,
-        ).mean(dim=1)
+        self._validate_causal_query(observed, treatment_name, outcome_name)
+
+        latent_samples = self.posterior.sample(num_samples)
+        numerator = torch.zeros_like(observed[treatment_name])
+        denominator = torch.zeros_like(observed[treatment_name])
+
+        for observed_name in observed:
+            numerator += self._compute_causal_regularization_numerator_term_samples(
+                observed,
+                treatment_name,
+                outcome_name,
+                observed_name,
+                latent_samples,
+            ).mean(dim=1)
+            denominator += self._compute_causal_regularization_denominator_term_samples(
+                observed,
+                treatment_name,
+                observed_name,
+                latent_samples,
+            ).mean(dim=1)
+
+        return numerator / (denominator + 1e-6)
 
     @no_grad()
     def _compute_causal_bias_samples(
@@ -183,7 +203,7 @@ class CausalBiasMixin(CausalEffectMixin):
             bias_samples += bias_contrib_per_sample(latent_samples).T
 
         return bias_samples
-    
+
     @no_grad()
     def _compute_causal_regularization_samples(
         self,
@@ -208,29 +228,33 @@ class CausalBiasMixin(CausalEffectMixin):
 
         latent_samples = self.posterior.sample(num_samples)
 
-        regularization_samples = torch.zeros(
+        num = torch.zeros(
+            observed[treatment_name].shape[0],
+            num_samples,
+            device=observed[treatment_name].device,
+        )
+        denom = torch.zeros(
             observed[treatment_name].shape[0],
             num_samples,
             device=observed[treatment_name].device,
         )
 
         for observed_name in observed:
-            num = self._compute_causal_regularization_numerator_term_samples(
+            num += self._compute_causal_regularization_numerator_term_samples(
                 observed,
                 treatment_name,
                 outcome_name,
                 observed_name,
                 latent_samples,
             )
-            denom = self._compute_causal_regularization_denominator_term_samples(
+            denom += self._compute_causal_regularization_denominator_term_samples(
                 observed,
                 treatment_name,
                 observed_name,
                 latent_samples,
             )
-            regularization_samples += num / (denom + 1e-6)
 
-        return regularization_samples
+        return num / (denom + 1e-6)
 
     def _compute_dx_diff(
         self,
@@ -317,7 +341,7 @@ class CausalBiasMixin(CausalEffectMixin):
                 values[name] = variable.f(parents, latent[name], f_mean)
 
         raise ValueError(f"Observed variable '{observed_name}' not found in the SEM.")
-    
+
     @no_grad()
     def _compute_causal_regularization_numerator_term_samples(
         self,
@@ -330,7 +354,7 @@ class CausalBiasMixin(CausalEffectMixin):
         """Compute numerator term samples for causal regularization.
 
         The term is computed per observation/per posterior sample as:
-            -(du_fy + mid_term) * dx_diff
+            (du_fy + mid_term) * dx_diff
         where the regularization mid-term uses the non-centered outcome value.
 
         Args:
@@ -376,7 +400,7 @@ class CausalBiasMixin(CausalEffectMixin):
                     observed_name=observed_name,
                 )
 
-                return -(du_fy + mid_term) * dx_diff
+                return (du_fy + mid_term) * dx_diff
 
             return numerator_term_per_observation(latent_sample, observed)
 
@@ -393,7 +417,7 @@ class CausalBiasMixin(CausalEffectMixin):
         """Compute denominator term samples for causal regularization.
 
         The denominator term is computed per observation/per sample as:
-            u_observed * dx_diff
+            -u_observed * dx_diff
 
         Args:
             observed: Dictionary mapping observed variable names to their values.
@@ -428,7 +452,7 @@ class CausalBiasMixin(CausalEffectMixin):
                     observed_name=observed_name,
                 )
 
-                return u_observed * dx_diff
+                return -u_observed * dx_diff
 
             return denominator_term_per_observation(latent_sample, observed)
 
@@ -503,7 +527,7 @@ class CausalBiasMixin(CausalEffectMixin):
         raise ValueError(
             f"Outcome variable '{outcome_name}' or observed variable '{observed_name}' not found in the SEM."
         )
-    
+
     def _compute_u_observed(
         self,
         latent: dict[str, Tensor],
@@ -532,15 +556,12 @@ class CausalBiasMixin(CausalEffectMixin):
                 f_mean = variable.f_mean(parents)
                 if name == observed_name:
                     return (observed[name] - f_mean) / variable.sigma
-                
+
                 values[name] = observed[name]
             else:
                 values[name] = variable.f(parents, latent[name])
 
-        raise ValueError(
-            f"Observed variable '{observed_name}' not found in the SEM."
-        )
-    
+        raise ValueError(f"Observed variable '{observed_name}' not found in the SEM.")
 
     def _compute_regularizer_mid_term(
         self,

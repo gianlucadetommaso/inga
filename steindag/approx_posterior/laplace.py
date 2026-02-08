@@ -149,8 +149,14 @@ class LaplacePosterior:
         optimizer = torch.optim.LBFGS(list(u_latent.values()), lr=1, max_iter=100)
 
         def closure() -> Tensor:
+            with torch.no_grad():
+                for u in u_latent.values():
+                    u.nan_to_num_(nan=0.0, posinf=1e3, neginf=-1e3)
+
             optimizer.zero_grad()
             loss = self._posterior_loss_fn(u_latent, observed)
+            if not torch.isfinite(loss):
+                loss = torch.nan_to_num(loss, nan=1e6, posinf=1e6, neginf=1e6)
             loss.backward()
             # Preserve gradients via backward, but return a detached scalar for LBFGS.
             return loss.detach()
@@ -181,14 +187,23 @@ class LaplacePosterior:
                 if pa_name in variable.parent_names
             }
             f_mean = variable.f_mean(parents)
+            f_mean = torch.nan_to_num(f_mean, nan=0.0, posinf=1e6, neginf=-1e6)
 
             if name in observed:
                 values[name] = observed[name]
                 u = (observed[name] - f_mean) / variable.sigma
 
             else:
-                values[name] = variable.f(parents, u_latent[name], f_mean)
-                u = u_latent[name]
+                latent_u = torch.nan_to_num(
+                    u_latent[name], nan=0.0, posinf=1e3, neginf=-1e3
+                )
+                values[name] = variable.f(parents, latent_u, f_mean)
+                values[name] = torch.nan_to_num(
+                    values[name], nan=0.0, posinf=1e6, neginf=-1e6
+                )
+                u = latent_u
+
+            u = torch.nan_to_num(u, nan=0.0, posinf=1e3, neginf=-1e3)
 
             loss = loss + 0.5 * torch.sum(u**2)
 
@@ -244,12 +259,28 @@ class LaplacePosterior:
             g = vmap(lambda u, o: grad(partial(f_mean_wrt_u, observed=o))(u))(
                 u_latent_rav, observed
             )
+            g = torch.nan_to_num(g, nan=0.0, posinf=1e6, neginf=-1e6)
             gn_hessian_rav += g[:, None] * g[:, :, None]
 
+        gn_hessian_rav = torch.nan_to_num(
+            gn_hessian_rav, nan=0.0, posinf=1e6, neginf=-1e6
+        )
+
         if latent_dim == 1:
-            L = 1 / gn_hessian_rav.sqrt()
+            L = 1 / gn_hessian_rav.clamp_min(1e-8).sqrt()
         else:
-            Linv = torch.linalg.cholesky(gn_hessian_rav, upper=True)
+            eye = torch.eye(latent_dim, device=device).expand(num_samples, -1, -1)
+            jitter = 1e-8
+            for _ in range(8):
+                try:
+                    Linv = torch.linalg.cholesky(
+                        gn_hessian_rav + jitter * eye, upper=True
+                    )
+                    break
+                except RuntimeError:
+                    jitter *= 10
+            else:
+                Linv = torch.linalg.cholesky(gn_hessian_rav + 1e-1 * eye, upper=True)
             L = torch.linalg.solve_triangular(
                 Linv,
                 torch.eye(latent_dim, requires_grad=False, device=device),

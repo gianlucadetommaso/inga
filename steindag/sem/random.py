@@ -32,10 +32,27 @@ def _compose_transforms(
     base: Tensor,
     transforms: Iterable[Callable[[Tensor], Tensor]],
 ) -> Tensor:
-    """Compose a sequence of transformations onto a base tensor."""
+    """Compose nonlinear transforms with per-step stabilization.
+
+    After each transform, values are sanitized and standardized to avoid
+    uncontrolled growth (e.g. repeated exponentials) that can produce NaNs
+    during SEM generation and downstream inference.
+    """
+
+    def _stabilize(x: Tensor) -> Tensor:
+        safe = torch.nan_to_num(x, nan=0.0, posinf=1e6, neginf=-1e6)
+        if safe.ndim == 0:
+            return safe
+
+        mean = safe.mean()
+        std = safe.std(unbiased=False).clamp_min(1.0)
+        return (safe - mean) / std
+
     value = base
     for transform in transforms:
         value = transform(value)
+        value = _stabilize(value)
+
     return value
 
 

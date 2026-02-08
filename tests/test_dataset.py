@@ -90,9 +90,7 @@ class TestSEMDataset:
         for key, bias in dataset.causal_biases.items():
             assert torch.allclose(bias, loaded.causal_biases[key])
         for key, regularization in dataset.causal_regularizations.items():
-            assert torch.allclose(
-                regularization, loaded.causal_regularizations[key]
-            )
+            assert torch.allclose(regularization, loaded.causal_regularizations[key])
 
     def test_dataset_single_seed_drives_sem_and_queries(self) -> None:
         """Ensure one dataset seed is enough for deterministic SEM + queries.
@@ -130,3 +128,28 @@ class TestSEMDataset:
             assert torch.allclose(
                 ds_a.causal_regularizations[key], ds_b.causal_regularizations[key]
             )
+
+    def test_dataset_generation_avoids_nan_in_laplace_fit(self) -> None:
+        """Regression test for unstable nonlinear configs causing NaNs in fit_map."""
+        config = SEMDatasetConfig(
+            sem_config=RandomSEMConfig(
+                num_variables=6,
+                parent_prob=0.65,
+                nonlinear_prob=1.0,
+            ),
+            num_samples=300,
+            num_queries=2,
+            min_observed=1,
+            seed=28,
+        )
+
+        dataset = generate_sem_dataset(config)
+
+        for tensor in dataset.data.values():
+            assert torch.isfinite(tensor).all()
+        for tensor in dataset.causal_effects.values():
+            assert torch.isfinite(tensor).all()
+        for tensor in dataset.causal_biases.values():
+            assert torch.isfinite(tensor).all()
+        for tensor in dataset.causal_regularizations.values():
+            assert torch.isfinite(tensor).all()

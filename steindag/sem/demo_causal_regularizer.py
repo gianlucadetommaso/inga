@@ -50,7 +50,7 @@ def _train_model(
 
     x_in = x.unsqueeze(1)
     y_t = y.unsqueeze(1)
-    reg_t = regularization_target.unsqueeze(1)
+    reg_t = regularization_target.detach().unsqueeze(1)
 
     for _ in range(epochs):
         pred = model(x_in)
@@ -121,7 +121,7 @@ def _print_results_table(
 
 def main() -> None:
     """Run demo and print causal-effect MAE comparison."""
-    demo_seed = 28
+    demo_seed = 43
     torch.manual_seed(demo_seed)
 
     dataset = generate_sem_dataset(

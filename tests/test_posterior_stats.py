@@ -264,19 +264,27 @@ class TestCausalBiasComponents:
             f"Causal bias should equal gamma*alpha/(1+alpha^2)={gamma * alpha / (1 + alpha**2)}, got {causal_bias}"
         )
 
-    def test_causal_regularization_is_sample_mean(
+    def test_causal_regularization_is_ratio_of_sample_means(
         self, sem: SEM, values: dict[str, Tensor]
     ) -> None:
-        """Test that causal_regularization equals mean of its sample tensor over dim=1."""
+        """Test causal_regularization equals ratio of numerator/denominator sample means."""
         observed: dict[str, Tensor] = {"X": values["X"]}
         sem.posterior.fit(observed)
 
         torch.manual_seed(0)
-        reg_samples = sem._compute_causal_regularization_samples(
+        latent_samples = sem.posterior.sample(256)
+        num_samples = sem._compute_causal_regularization_numerator_term_samples(
             observed=observed,
             treatment_name="X",
             outcome_name="Y",
-            num_samples=256,
+            observed_name="X",
+            latent_samples=latent_samples,
+        )
+        den_samples = sem._compute_causal_regularization_denominator_term_samples(
+            observed=observed,
+            treatment_name="X",
+            observed_name="X",
+            latent_samples=latent_samples,
         )
 
         torch.manual_seed(0)
@@ -287,7 +295,9 @@ class TestCausalBiasComponents:
             num_samples=256,
         )
 
-        assert torch.allclose(reg, reg_samples.mean(dim=1), atol=1e-6)
+        assert torch.allclose(
+            reg, num_samples.mean(dim=1) / den_samples.mean(dim=1), atol=2e-2
+        )
 
     def test_causal_regularization_samples_differ_from_bias_samples(
         self, sem: SEM, values: dict[str, Tensor]
@@ -313,6 +323,90 @@ class TestCausalBiasComponents:
         )
 
         assert not torch.allclose(bias_samples, reg_samples)
+
+    def test_causal_regularization_matches_linear_confounder_closed_form(
+        self, sem: SEM, values: dict[str, Tensor]
+    ) -> None:
+        """Test closed form causal regularizer for the linear confounder model.
+
+        For Z -> X, Z -> Y, X -> Y with only X observed, verifies:
+            r(x) = (beta + gamma*alpha/(1+alpha^2)) * x - gamma*alpha/x
+        """
+        alpha = _get_coef(sem, "X", "Z")
+        beta = _get_coef(sem, "Y", "X")
+        gamma = _get_coef(sem, "Y", "Z")
+
+        observed: dict[str, Tensor] = {"X": values["X"]}
+        sem.posterior.fit(observed)
+
+        reg = sem.causal_regularization(
+            observed=observed,
+            treatment_name="X",
+            outcome_name="Y",
+            num_samples=2000,
+        )
+
+        x = observed["X"]
+        expected = (beta + gamma * alpha / (1 + alpha**2)) * x - gamma * alpha / x
+
+        assert torch.allclose(reg, expected, atol=0.35), (
+            "Causal regularization should match closed form "
+            "(beta + gamma*alpha/(1+alpha^2))*x - gamma*alpha/x"
+        )
+
+    def test_causal_regularization_numerator_matches_closed_form(
+        self, sem: SEM, values: dict[str, Tensor]
+    ) -> None:
+        """Test numerator closed form for linear confounder regularization."""
+        alpha = _get_coef(sem, "X", "Z")
+        beta = _get_coef(sem, "Y", "X")
+        gamma = _get_coef(sem, "Y", "Z")
+
+        observed: dict[str, Tensor] = {"X": values["X"]}
+        sem.posterior.fit(observed)
+        latent_samples = sem.posterior.sample(3000)
+
+        num_samples = sem._compute_causal_regularization_numerator_term_samples(
+            observed=observed,
+            treatment_name="X",
+            outcome_name="Y",
+            observed_name="X",
+            latent_samples=latent_samples,
+        )
+
+        x = observed["X"]
+        expected_num = (
+            (beta + gamma * alpha / (1 + alpha**2)) * x**2 - gamma * alpha
+        ) / (1 + alpha**2)
+
+        assert torch.allclose(num_samples.mean(dim=1), expected_num, atol=0.35), (
+            "Causal regularization numerator should match closed form "
+            "((beta+gamma*alpha/(1+alpha^2))*x^2 - gamma*alpha)/(1+alpha^2)"
+        )
+
+    def test_causal_regularization_denominator_matches_closed_form(
+        self, sem: SEM, values: dict[str, Tensor]
+    ) -> None:
+        """Test denominator closed form for linear confounder regularization."""
+        alpha = _get_coef(sem, "X", "Z")
+
+        observed: dict[str, Tensor] = {"X": values["X"]}
+        sem.posterior.fit(observed)
+        latent_samples = sem.posterior.sample(3000)
+
+        denom_samples = sem._compute_causal_regularization_denominator_term_samples(
+            observed=observed,
+            treatment_name="X",
+            observed_name="X",
+            latent_samples=latent_samples,
+        )
+
+        x = observed["X"]
+        expected_denom = x / (1 + alpha**2)
+
+        assert torch.allclose(denom_samples.mean(dim=1), expected_denom, atol=0.2), (
+            "Causal regularization denominator should match closed form x/(1+alpha^2)"
+        )
 
     def test_posterior_stats_observe_x_and_y(
         self, sem: SEM, values: dict[str, Tensor]

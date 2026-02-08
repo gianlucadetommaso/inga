@@ -216,3 +216,19 @@ class TestRandomSEM:
         assert any(
             isinstance(var, FunctionalVariable) for var in sem._variables.values()
         )
+
+    def test_random_sem_nonlinear_generation_is_finite(self) -> None:
+        """Ensure generated values remain finite under nonlinear transform chains."""
+        config = RandomSEMConfig(
+            num_variables=8,
+            parent_prob=0.8,
+            nonlinear_prob=1.0,
+            seed=123,
+        )
+        sem = random_sem(config)
+
+        torch.manual_seed(0)
+        values = sem.generate(2000)
+
+        for name, tensor in values.items():
+            assert torch.isfinite(tensor).all(), f"Non-finite values found in {name}"
