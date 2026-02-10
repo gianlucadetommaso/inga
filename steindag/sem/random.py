@@ -40,7 +40,11 @@ def _compose_transforms(
     """
 
     def _stabilize(x: Tensor) -> Tensor:
+        # Keep transformed values in a numerically safe range for both
+        # vectorized generation and scalar-per-observation calls used by
+        # causal gradients (effect/bias computation).
         safe = torch.nan_to_num(x, nan=0.0, posinf=1e6, neginf=-1e6)
+        safe = safe.clamp(-1e6, 1e6)
         if safe.ndim == 0:
             return safe
 
@@ -59,7 +63,8 @@ def _compose_transforms(
 _TRANSFORM_MAP: dict[str, Callable[[Tensor], Tensor]] = {
     "sin": torch.sin,
     "cos": torch.cos,
-    "exp": torch.exp,
+    # Bound the exponent input to keep both forward values and derivatives finite.
+    "exp": lambda x: torch.exp(x.clamp(-20.0, 20.0)),
     "tanh": torch.tanh,
 }
 

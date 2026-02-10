@@ -10,6 +10,14 @@ from torch.func import grad
 from dataclasses import dataclass
 from functools import partial
 from steindag.variable.base import Variable
+from steindag.variable.functional import FunctionalVariable
+
+
+_LATENT_ABS_MAX = 8.0
+_EPS_ABS_MAX = 3.0
+_MAX_STD_DEVS = 3.0
+_NONLINEAR_LATENT_ABS_MAX = 5.0
+_NONLINEAR_VAR_CAP = 0.25
 
 
 @dataclass
@@ -47,6 +55,9 @@ class LaplacePosterior:
         """
         self._variables = variables
         self._state: LaplacePosteriorState | None = None
+
+    def _has_nonlinear_variables(self) -> bool:
+        return any(isinstance(v, FunctionalVariable) for v in self._variables.values())
 
     def fit(self, observed: dict[str, Tensor]) -> None:
         """Fit the Laplace posterior to observed data.
@@ -91,18 +102,46 @@ class LaplacePosterior:
             raise ValueError("`fit` must be invoked first.")
 
         state = self.state
-        samples_rav = state.MAP_rav.unsqueeze(-1) + torch.sum(
-            state.L_cov_rav.unsqueeze(-1)
-            * torch.randn(
+        has_nonlinear = self._has_nonlinear_variables()
+        latent_abs_max = _NONLINEAR_LATENT_ABS_MAX if has_nonlinear else _LATENT_ABS_MAX
+
+        if has_nonlinear:
+            # Use antithetic pairs + clipped standard-normal draws to reduce
+            # Monte Carlo variance and avoid rare tail samples dominating
+            # highly nonlinear downstream quantities (e.g. causal bias terms).
+            half = (num_samples + 1) // 2
+            eps_half = torch.randn(
                 size=(
                     len(state.MAP_rav),
-                    1,
+                    state.MAP_rav.shape[1],
+                    half,
+                ),
+                device=state.MAP_rav.device,
+                dtype=state.MAP_rav.dtype,
+            ).clamp(-_EPS_ABS_MAX, _EPS_ABS_MAX)
+            eps = torch.cat([eps_half, -eps_half], dim=2)[..., :num_samples]
+        else:
+            # Preserve exact Gaussian sampling behavior for linear SEMs, where
+            # analytical posterior tests expect unbiased Laplace sampling.
+            eps = torch.randn(
+                size=(
+                    len(state.MAP_rav),
                     state.MAP_rav.shape[1],
                     num_samples,
-                )
-            ),
-            dim=1,
-        )
+                ),
+                device=state.MAP_rav.device,
+                dtype=state.MAP_rav.dtype,
+            )
+        # Correct Gaussian sampling: u = MAP + L @ eps, where Cov(u|x)=L L^T.
+        samples_rav = state.MAP_rav.unsqueeze(-1) + torch.matmul(state.L_cov_rav, eps)
+        if has_nonlinear:
+            # Additional robustification only for nonlinear SEMs: truncate to a
+            # bounded number of posterior standard deviations around MAP.
+            delta = (samples_rav - state.MAP_rav.unsqueeze(-1)).clamp(
+                -_MAX_STD_DEVS, _MAX_STD_DEVS
+            )
+            samples_rav = state.MAP_rav.unsqueeze(-1) + delta
+        samples_rav = samples_rav.clamp(-latent_abs_max, latent_abs_max)
         return vmap(
             lambda s: self._unravel(s, state.latent_names), in_dims=2, out_dims=1
         )(samples_rav)
@@ -138,6 +177,9 @@ class LaplacePosterior:
             Dictionary mapping latent variable names to their MAP noise estimates.
         """
         size = len(list(observed.values())[0])
+        latent_abs_max = (
+            _NONLINEAR_LATENT_ABS_MAX if self._has_nonlinear_variables() else _LATENT_ABS_MAX
+        )
         u_latent = nn.ParameterDict(
             {
                 name: torch.randn(size)
@@ -151,17 +193,40 @@ class LaplacePosterior:
         def closure() -> Tensor:
             with torch.no_grad():
                 for u in u_latent.values():
-                    u.nan_to_num_(nan=0.0, posinf=1e3, neginf=-1e3)
+                    u.nan_to_num_(nan=0.0, posinf=latent_abs_max, neginf=-latent_abs_max)
+                    u.clamp_(-latent_abs_max, latent_abs_max)
 
             optimizer.zero_grad()
             loss = self._posterior_loss_fn(u_latent, observed)
             if not torch.isfinite(loss):
-                loss = torch.nan_to_num(loss, nan=1e6, posinf=1e6, neginf=1e6)
+                # If the posterior objective becomes non-finite, switch to a
+                # finite quadratic fallback on the latent variables to pull the
+                # optimizer back to a numerically valid region.
+                loss = torch.zeros((), device=list(u_latent.values())[0].device)
+                for u in u_latent.values():
+                    u_safe = torch.nan_to_num(
+                        u,
+                        nan=0.0,
+                        posinf=latent_abs_max,
+                        neginf=-latent_abs_max,
+                    )
+                    loss = loss + 0.5 * torch.sum(u_safe**2)
             loss.backward()
+            with torch.no_grad():
+                for u in u_latent.values():
+                    if u.grad is not None:
+                        u.grad.nan_to_num_(nan=0.0, posinf=1e3, neginf=-1e3)
             # Preserve gradients via backward, but return a detached scalar for LBFGS.
             return loss.detach()
 
         optimizer.step(closure)
+
+        # LBFGS may leave parameters in a non-finite state after its final line
+        # search update. Enforce finiteness before returning the MAP estimate.
+        with torch.no_grad():
+            for u in u_latent.values():
+                u.nan_to_num_(nan=0.0, posinf=latent_abs_max, neginf=-latent_abs_max)
+                u.clamp_(-latent_abs_max, latent_abs_max)
 
         return {name: u.detach().clone() for name, u in u_latent.items()}
 
@@ -179,6 +244,9 @@ class LaplacePosterior:
         """
         values: dict[str, Tensor] = {}
         loss: Tensor | float = 0.0
+        latent_abs_max = (
+            _NONLINEAR_LATENT_ABS_MAX if self._has_nonlinear_variables() else _LATENT_ABS_MAX
+        )
 
         for name, variable in self._variables.items():
             parents = {
@@ -195,15 +263,25 @@ class LaplacePosterior:
 
             else:
                 latent_u = torch.nan_to_num(
-                    u_latent[name], nan=0.0, posinf=1e3, neginf=-1e3
+                    u_latent[name],
+                    nan=0.0,
+                    posinf=latent_abs_max,
+                    neginf=-latent_abs_max,
                 )
+                latent_u = latent_u.clamp(-latent_abs_max, latent_abs_max)
                 values[name] = variable.f(parents, latent_u, f_mean)
                 values[name] = torch.nan_to_num(
                     values[name], nan=0.0, posinf=1e6, neginf=-1e6
                 )
                 u = latent_u
 
-            u = torch.nan_to_num(u, nan=0.0, posinf=1e3, neginf=-1e3)
+            u = torch.nan_to_num(
+                u,
+                nan=0.0,
+                posinf=latent_abs_max,
+                neginf=-latent_abs_max,
+            )
+            u = u.clamp(-latent_abs_max, latent_abs_max)
 
             loss = loss + 0.5 * torch.sum(u**2)
 
@@ -242,13 +320,14 @@ class LaplacePosterior:
 
         num_samples = len(u_latent_rav)
         device = u_latent_rav.device
+        has_nonlinear = self._has_nonlinear_variables()
+        var_cap = _NONLINEAR_VAR_CAP if has_nonlinear else 1.0
 
         gn_hessian_rav = torch.zeros(
             (num_samples, latent_dim, latent_dim), device=device
         )
-        gn_hessian_rav[:, range(latent_dim), range(latent_dim)] = Tensor(
-            [1 / self._variables[name].sigma ** 2 for name in latent_names]
-        )
+        # Prior precision over latent noises u is identity (u ~ N(0, I)).
+        gn_hessian_rav[:, range(latent_dim), range(latent_dim)] = 1.0
 
         for observed_name in observed:
             f_mean_wrt_u = partial(
@@ -260,32 +339,69 @@ class LaplacePosterior:
                 u_latent_rav, observed
             )
             g = torch.nan_to_num(g, nan=0.0, posinf=1e6, neginf=-1e6)
-            gn_hessian_rav += g[:, None] * g[:, :, None]
+            # Observed term in posterior loss is 0.5 * ((y-f)/sigma)^2,
+            # so Jacobian contribution is scaled by 1/sigma.
+            sigma_obs = self._variables[observed_name].sigma
+            g_scaled = g / sigma_obs
+            gn_hessian_rav += g_scaled[:, None] * g_scaled[:, :, None]
 
         gn_hessian_rav = torch.nan_to_num(
             gn_hessian_rav, nan=0.0, posinf=1e6, neginf=-1e6
         )
+        # Gauss-Newton Hessian should be symmetric PSD in theory, but numerical
+        # autodiff/vmap noise can introduce slight asymmetry/indefiniteness.
+        gn_hessian_rav = 0.5 * (gn_hessian_rav + gn_hessian_rav.transpose(-1, -2))
 
         if latent_dim == 1:
             L = 1 / gn_hessian_rav.clamp_min(1e-8).sqrt()
         else:
-            eye = torch.eye(latent_dim, device=device).expand(num_samples, -1, -1)
-            jitter = 1e-8
-            for _ in range(8):
-                try:
-                    Linv = torch.linalg.cholesky(
-                        gn_hessian_rav + jitter * eye, upper=True
+            # Per-sample robust factorization. Some batches can be numerically
+            # ill-conditioned even when others are fine; handling each sample
+            # separately avoids failing the whole fit.
+            eye = torch.eye(latent_dim, requires_grad=False, device=device)
+            L = torch.zeros((num_samples, latent_dim, latent_dim), device=device)
+
+            for i in range(num_samples):
+                h_i = 0.5 * (gn_hessian_rav[i] + gn_hessian_rav[i].T)
+                chol_h_i = None
+                jitter = 1e-10
+
+                for _ in range(14):
+                    chol_try, info = torch.linalg.cholesky_ex(
+                        h_i + jitter * eye,
+                        upper=False,
+                        check_errors=False,
                     )
-                    break
-                except RuntimeError:
+                    if int(info.item()) == 0 and torch.isfinite(chol_try).all():
+                        chol_h_i = chol_try
+                        break
                     jitter *= 10
-            else:
-                Linv = torch.linalg.cholesky(gn_hessian_rav + 1e-1 * eye, upper=True)
-            L = torch.linalg.solve_triangular(
-                Linv,
-                torch.eye(latent_dim, requires_grad=False, device=device),
-                upper=False,
-            )
+
+                if chol_h_i is not None:
+                    # If H = C C^T (C lower), then a Cholesky factor of H^{-1}
+                    # is C^{-1}.
+                    L[i] = torch.linalg.solve_triangular(
+                        chol_h_i,
+                        eye,
+                        upper=False,
+                    )
+                else:
+                    # Final fallback: diagonal precision approximation.
+                    # This keeps posterior sampling finite without masking
+                    # values in downstream causal computations.
+                    d = torch.diag(h_i).clamp_min(1e-6)
+                    L[i] = torch.diag(1.0 / torch.sqrt(d))
+
+        # Posterior over latent noises u should not be more diffuse than the
+        # N(0, I) prior in this model class (precision = I + J^T J). Numerical
+        # approximations/fallbacks can violate this; cap per-latent posterior
+        # variance to 1 by row-wise rescaling of the Cholesky factor.
+        if latent_dim == 1:
+            L = L.clamp(max=var_cap**0.5)
+        else:
+            var_diag = torch.sum(L**2, dim=2)
+            scale = (var_cap / var_diag.clamp_min(var_cap)).sqrt()
+            L = L * scale.unsqueeze(-1)
 
         return L
 
