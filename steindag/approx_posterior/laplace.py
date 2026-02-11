@@ -59,6 +59,8 @@ class LaplacePosterior:
         lbfgs_lr: float = 1.0,
         lbfgs_max_iter: int = 100,
         lbfgs_line_search_fn: str | None = "strong_wolfe",
+        latent_trust_radii: tuple[float, ...] = (2.0, 4.0, 8.0),
+        jacobian_norm_cap: float = 1e3,
     ) -> None:
         """Initialize the Laplace posterior.
 
@@ -75,6 +77,10 @@ class LaplacePosterior:
             lbfgs_lr: L-BFGS learning rate for final refinement.
             lbfgs_max_iter: Maximum number of L-BFGS iterations.
             lbfgs_line_search_fn: L-BFGS line search function.
+            latent_trust_radii: Trust-region radii used to parameterize latent
+                optimization as ``u = r * tanh(z)`` across continuation stages.
+            jacobian_norm_cap: Smooth cap for per-row Jacobian norm used in
+                Gauss-Newton standardization. Larger values recover vanilla GN.
         """
         self._variables = variables
         self._state: LaplacePosteriorState | None = None
@@ -91,6 +97,8 @@ class LaplacePosterior:
             lbfgs_lr=lbfgs_lr,
             lbfgs_max_iter=lbfgs_max_iter,
             lbfgs_line_search_fn=lbfgs_line_search_fn,
+            latent_trust_radii=latent_trust_radii,
+            jacobian_norm_cap=jacobian_norm_cap,
         )
 
     def configure_map_options(
@@ -106,6 +114,8 @@ class LaplacePosterior:
         lbfgs_lr: float | None = None,
         lbfgs_max_iter: int | None = None,
         lbfgs_line_search_fn: str | None = None,
+        latent_trust_radii: tuple[float, ...] | None = None,
+        jacobian_norm_cap: float | None = None,
     ) -> None:
         """Configure robust MAP and optimizer options.
 
@@ -174,6 +184,18 @@ class LaplacePosterior:
         elif not hasattr(self, "_lbfgs_line_search_fn"):
             self._lbfgs_line_search_fn = "strong_wolfe"
 
+        if latent_trust_radii is not None:
+            if len(latent_trust_radii) == 0 or any(r <= 0 for r in latent_trust_radii):
+                raise ValueError(
+                    "`latent_trust_radii` must be non-empty and all values > 0."
+                )
+            self._latent_trust_radii = latent_trust_radii
+
+        if jacobian_norm_cap is not None:
+            if jacobian_norm_cap <= 0:
+                raise ValueError("`jacobian_norm_cap` must be > 0.")
+            self._jacobian_norm_cap = jacobian_norm_cap
+
     def fit(self, observed: dict[str, Tensor]) -> None:
         """Fit the Laplace posterior to observed data.
 
@@ -220,8 +242,15 @@ class LaplacePosterior:
         num_components = min(self._num_mixture_components, len(candidates))
         num_components = max(1, num_components)
 
-        selected_idx = torch.topk(-losses_by_row, k=num_components, dim=1).indices
-        selected_losses = torch.gather(losses_by_row, dim=1, index=selected_idx)
+        safe_losses_by_row = torch.where(
+            torch.isfinite(losses_by_row),
+            losses_by_row,
+            torch.full_like(losses_by_row, float("inf")),
+        )
+        selected_idx = torch.topk(-safe_losses_by_row, k=num_components, dim=1).indices
+        selected_losses = torch.gather(
+            safe_losses_by_row, dim=1, index=selected_idx
+        )
 
         latent_dim = maps_by_row.shape[-1]
         selected_idx_expanded = selected_idx.unsqueeze(-1).expand(-1, -1, latent_dim)
@@ -335,7 +364,12 @@ class LaplacePosterior:
         candidates, candidate_losses = self._fit_map_candidates(observed, latent_names)
 
         stacked_losses = torch.stack(candidate_losses, dim=0)  # (restarts, batch)
-        best_restart_idx = stacked_losses.argmin(dim=0)
+        safe_losses = torch.where(
+            torch.isfinite(stacked_losses),
+            stacked_losses,
+            torch.full_like(stacked_losses, float("inf")),
+        )
+        best_restart_idx = safe_losses.argmin(dim=0)
         row_idx = torch.arange(size, device=reference.device)
 
         return {
@@ -377,7 +411,13 @@ class LaplacePosterior:
                 init_scale=init_scale,
             )
             candidates.append(u_candidate)
-            candidate_losses.append(self._posterior_loss_fn(u_candidate, observed))
+            observed_for_loss = {
+                name: value.to(dtype=next(iter(u_candidate.values())).dtype)
+                for name, value in observed.items()
+            }
+            candidate_losses.append(
+                self._posterior_loss_fn(u_candidate, observed_for_loss)
+            )
 
         return candidates, candidate_losses
 
@@ -401,33 +441,44 @@ class LaplacePosterior:
         Returns:
             Candidate MAP latent dictionary for all observations in the batch.
         """
+        initial_radius = self._latent_trust_radii[0]
+        opt_dtype = torch.float64
+        observed_opt = {
+            name: value.to(dtype=opt_dtype) for name, value in observed.items()
+        }
         if init_scale == 0.0:
-            u_init = {
-                name: torch.zeros(size, device=reference.device, dtype=reference.dtype)
+            z_init = {
+                name: torch.zeros(size, device=reference.device, dtype=opt_dtype)
                 for name in latent_names
             }
         else:
-            u_init = {
-                name: init_scale
-                * torch.randn(size, device=reference.device, dtype=reference.dtype)
+            z_init = {
+                name: (init_scale / initial_radius)
+                * torch.randn(size, device=reference.device, dtype=opt_dtype)
                 for name in latent_names
             }
 
-        u_latent = nn.ParameterDict(
-            {name: nn.Parameter(value) for name, value in u_init.items()}
+        z_latent = nn.ParameterDict(
+            {name: nn.Parameter(value) for name, value in z_init.items()}
         )
 
-        adam = torch.optim.Adam(list(u_latent.values()), lr=self._adam_lr)
+        def bounded_u(radius: float) -> dict[str, Tensor]:
+            return {name: radius * torch.tanh(z) for name, z in z_latent.items()}
+
+        adam = torch.optim.Adam(list(z_latent.values()), lr=self._adam_lr)
         scheduler = None
         if self._adam_scheduler_gamma is not None:
             scheduler = torch.optim.lr_scheduler.ExponentialLR(
                 adam, gamma=self._adam_scheduler_gamma
             )
-        for obs_sigma_scale in self._continuation_scales:
+        for idx, obs_sigma_scale in enumerate(self._continuation_scales):
+            radius = self._latent_trust_radii[
+                min(idx, len(self._latent_trust_radii) - 1)
+            ]
             for _ in range(self._continuation_steps):
                 adam.zero_grad()
                 loss = self._posterior_loss_fn(
-                    dict(u_latent), observed, obs_sigma_scale=obs_sigma_scale
+                    bounded_u(radius), observed_opt, obs_sigma_scale=obs_sigma_scale
                 ).mean()
                 loss.backward()
                 adam.step()
@@ -435,22 +486,43 @@ class LaplacePosterior:
                     scheduler.step()
 
         optimizer = torch.optim.LBFGS(
-            list(u_latent.values()),
+            list(z_latent.values()),
             lr=self._lbfgs_lr,
             max_iter=self._lbfgs_max_iter,
             line_search_fn=self._lbfgs_line_search_fn,
         )
+        final_radius = self._latent_trust_radii[-1]
+        continuation_u = {
+            name: (final_radius * torch.tanh(z)).detach().clone()
+            for name, z in z_latent.items()
+        }
 
         def closure() -> Tensor:
             optimizer.zero_grad()
             loss = self._posterior_loss_fn(
-                dict(u_latent), observed, obs_sigma_scale=1.0
+                bounded_u(final_radius), observed_opt, obs_sigma_scale=1.0
             ).mean()
             loss.backward()
             return loss
 
         optimizer.step(closure)
-        return {name: u.detach().clone() for name, u in u_latent.items()}
+        refined_u = {
+            name: (final_radius * torch.tanh(z)).detach().clone()
+            for name, z in z_latent.items()
+        }
+
+        continuation_loss = self._posterior_loss_fn(continuation_u, observed_opt)
+        refined_loss = self._posterior_loss_fn(refined_u, observed_opt)
+        use_refined = torch.isfinite(refined_loss) & (
+            (refined_loss <= continuation_loss) | ~torch.isfinite(continuation_loss)
+        )
+
+        return {
+            name: torch.where(use_refined, refined_u[name], continuation_u[name]).to(
+                dtype=reference.dtype
+            )
+            for name in latent_names
+        }
 
     def _posterior_loss_fn(
         self,
@@ -529,38 +601,61 @@ class LaplacePosterior:
 
         num_samples = len(u_latent_rav)
         device = u_latent_rav.device
-        dtype = u_latent_rav.dtype
+        out_dtype = u_latent_rav.dtype
+        hessian_dtype = torch.float64
+
+        u_latent_rav_h = u_latent_rav.to(dtype=hessian_dtype)
+        observed_h = {
+            name: value.to(dtype=hessian_dtype) for name, value in observed.items()
+        }
 
         gn_hessian_rav = torch.zeros(
-            (num_samples, latent_dim, latent_dim), device=device, dtype=dtype
+            (num_samples, latent_dim, latent_dim), device=device, dtype=hessian_dtype
         )
         gn_hessian_rav[:, range(latent_dim), range(latent_dim)] = torch.tensor(
             [1 / self._variables[name].sigma ** 2 for name in latent_names],
             device=device,
-            dtype=dtype,
+            dtype=hessian_dtype,
         )
 
-        for observed_name in observed:
+        for observed_name in observed_h:
             f_mean_wrt_u = partial(
                 self._f_mean_u,
                 observed_name=observed_name,
                 latent_names=latent_names,
             )
             g = vmap(lambda u, o: grad(partial(f_mean_wrt_u, observed=o))(u))(
-                u_latent_rav, observed
+                u_latent_rav_h, observed_h
             )
+
+            # Smooth Jacobian standardization (robust influence):
+            # g_std = g / sqrt(1 + ||g||^2 / c^2)
+            # This is mathematically equivalent to using an adaptive local
+            # observation scale sigma_eff = sigma * sqrt(1 + ||g||^2 / c^2).
+            g_norm = torch.linalg.vector_norm(g, dim=1)
+            scale = torch.sqrt(1.0 + (g_norm / self._jacobian_norm_cap) ** 2)
+            g = g / scale[:, None]
+
             gn_hessian_rav += (
                 g[:, None] * g[:, :, None] / self._variables[observed_name].sigma ** 2
             )
 
+        # Enforce exact symmetry before Cholesky to avoid numerical skew.
+        gn_hessian_rav = 0.5 * (gn_hessian_rav + gn_hessian_rav.transpose(-1, -2))
+
         Linv = torch.linalg.cholesky(gn_hessian_rav)
+
+        eye = torch.eye(
+            latent_dim, requires_grad=False, device=device, dtype=hessian_dtype
+        )
+
         L = torch.linalg.solve_triangular(
             Linv,
-            torch.eye(latent_dim, requires_grad=False, device=device, dtype=dtype),
+            eye,
             upper=False,
         )
 
-        return L
+        return L.to(dtype=out_dtype)
 
     def _get_latent_names(self, u_latent: dict[str, Tensor]) -> list[str]:
         """Get the names of latent variables in topological order.
