@@ -75,6 +75,32 @@ class TestSEMInit:
         """Test that __init__ creates a LaplacePosterior."""
         assert simple_sem.posterior is not None
 
+    def test_init_passes_posterior_kwargs(self) -> None:
+        """Test that SEM forwards posterior configuration to LaplacePosterior."""
+        sem = SEM(
+            variables=[
+                LinearVariable(
+                    name="Z", parent_names=[], sigma=1.0, coefs={}, intercept=0.0
+                ),
+                LinearVariable(
+                    name="X",
+                    parent_names=["Z"],
+                    sigma=1.0,
+                    coefs={"Z": 1.0},
+                    intercept=0.0,
+                ),
+            ],
+            posterior_kwargs={
+                "num_map_restarts": 4,
+                "num_mixture_components": 2,
+                "adam_lr": 1e-2,
+            },
+        )
+
+        assert sem.posterior._num_map_restarts == 4
+        assert sem.posterior._num_mixture_components == 2
+        assert sem.posterior._adam_lr == 1e-2
+
 
 class TestSEMGenerate:
     """Tests for SEM.generate method."""

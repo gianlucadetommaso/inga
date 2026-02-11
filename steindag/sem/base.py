@@ -19,14 +19,23 @@ class SEM(CausalBiasMixin):
         posterior: Laplace approximate posterior for inference.
     """
 
-    def __init__(self, variables: list[Variable]) -> None:
+    def __init__(
+        self,
+        variables: list[Variable],
+        posterior_kwargs: dict | None = None,
+    ) -> None:
         """Initialize the SEM.
 
         Args:
             variables: List of variables in topological order (parents before children).
+            posterior_kwargs: Optional keyword arguments forwarded to
+                :class:`LaplacePosterior` for configuring MAP/optimizer settings.
         """
         self._variables = {variable.name: variable for variable in variables}
-        self.posterior = LaplacePosterior(variables=self._variables)
+        self.posterior = LaplacePosterior(
+            variables=self._variables,
+            **({} if posterior_kwargs is None else posterior_kwargs),
+        )
 
     def generate(self, num_samples: int) -> dict[str, Tensor]:
         """Generate samples from the SEM by forward sampling.
