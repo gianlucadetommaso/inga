@@ -9,6 +9,7 @@ from torch import Tensor, no_grad, vmap, nn
 from torch.func import grad
 from dataclasses import dataclass
 from functools import partial
+from typing import Mapping
 from steindag.variable.base import Variable
 
 
@@ -17,13 +18,18 @@ class LaplacePosteriorState:
     """State of a fitted Laplace posterior.
 
     Attributes:
-        MAP_rav: Raveled MAP estimates of latent variables.
-        L_cov_rav: Cholesky factor of the approximate covariance matrix.
+        MAP_components_rav: MAP means of Gaussian mixture components.
+            Shape: (batch_size, num_components, latent_dim).
+        L_cov_components_rav: Cholesky factors of component covariances.
+            Shape: (batch_size, num_components, latent_dim, latent_dim).
+        component_log_weights: Log-weights of mixture components.
+            Shape: (batch_size, num_components). Rows are log-softmax normalized.
         latent_names: Names of latent variables in order.
     """
 
-    MAP_rav: Tensor
-    L_cov_rav: Tensor
+    MAP_components_rav: Tensor
+    L_cov_components_rav: Tensor
+    component_log_weights: Tensor
     latent_names: list[str]
 
 
@@ -39,14 +45,134 @@ class LaplacePosterior:
         _state: Current fitted state, or None if not yet fitted.
     """
 
-    def __init__(self, variables: dict[str, Variable]) -> None:
+    def __init__(
+        self,
+        variables: dict[str, Variable],
+        *,
+        continuation_scales: tuple[float, ...] = (3.0, 1.5, 1.0),
+        continuation_steps: int = 40,
+        num_map_restarts: int = 3,
+        restart_init_scales: tuple[float, ...] = (0.0, 0.5, 1.0),
+        num_mixture_components: int = 1,
+        adam_lr: float = 5e-2,
+        adam_scheduler_gamma: float | None = None,
+        lbfgs_lr: float = 1.0,
+        lbfgs_max_iter: int = 100,
+        lbfgs_line_search_fn: str | None = "strong_wolfe",
+    ) -> None:
         """Initialize the Laplace posterior.
 
         Args:
             variables: Dictionary mapping variable names to Variable objects.
+            continuation_scales: Observation-noise scales for continuation warm starts.
+            continuation_steps: Number of Adam steps per continuation scale.
+            num_map_restarts: Number of MAP restart candidates.
+            restart_init_scales: Std scales for restart initializations.
+            num_mixture_components: Number of posterior mixture components kept.
+            adam_lr: Adam learning rate for continuation optimization.
+            adam_scheduler_gamma: Optional exponential LR decay factor for Adam.
+                If None, no scheduler is used.
+            lbfgs_lr: L-BFGS learning rate for final refinement.
+            lbfgs_max_iter: Maximum number of L-BFGS iterations.
+            lbfgs_line_search_fn: L-BFGS line search function.
         """
         self._variables = variables
         self._state: LaplacePosteriorState | None = None
+        self._adam_scheduler_gamma: float | None = None
+        self._lbfgs_line_search_fn: str | None = "strong_wolfe"
+        self.configure_map_options(
+            continuation_scales=continuation_scales,
+            continuation_steps=continuation_steps,
+            num_map_restarts=num_map_restarts,
+            restart_init_scales=restart_init_scales,
+            num_mixture_components=num_mixture_components,
+            adam_lr=adam_lr,
+            adam_scheduler_gamma=adam_scheduler_gamma,
+            lbfgs_lr=lbfgs_lr,
+            lbfgs_max_iter=lbfgs_max_iter,
+            lbfgs_line_search_fn=lbfgs_line_search_fn,
+        )
+
+    def configure_map_options(
+        self,
+        *,
+        continuation_scales: tuple[float, ...] | None = None,
+        continuation_steps: int | None = None,
+        num_map_restarts: int | None = None,
+        restart_init_scales: tuple[float, ...] | None = None,
+        num_mixture_components: int | None = None,
+        adam_lr: float | None = None,
+        adam_scheduler_gamma: float | None = None,
+        lbfgs_lr: float | None = None,
+        lbfgs_max_iter: int | None = None,
+        lbfgs_line_search_fn: str | None = None,
+    ) -> None:
+        """Configure robust MAP and optimizer options.
+
+        This method allows users to adjust continuation, multi-start, mixture,
+        and optimizer behavior without modifying private attributes.
+        """
+        if continuation_scales is not None:
+            if len(continuation_scales) == 0 or any(
+                scale <= 0 for scale in continuation_scales
+            ):
+                raise ValueError(
+                    "`continuation_scales` must be non-empty and all values > 0."
+                )
+            self._continuation_scales = continuation_scales
+
+        if continuation_steps is not None:
+            if continuation_steps <= 0:
+                raise ValueError("`continuation_steps` must be > 0.")
+            self._continuation_steps = continuation_steps
+
+        if num_map_restarts is not None:
+            if num_map_restarts <= 0:
+                raise ValueError("`num_map_restarts` must be > 0.")
+            self._num_map_restarts = num_map_restarts
+
+        if restart_init_scales is not None:
+            if len(restart_init_scales) == 0 or any(
+                scale < 0 for scale in restart_init_scales
+            ):
+                raise ValueError(
+                    "`restart_init_scales` must be non-empty and all values >= 0."
+                )
+            self._restart_init_scales = restart_init_scales
+
+        if num_mixture_components is not None:
+            if num_mixture_components <= 0:
+                raise ValueError("`num_mixture_components` must be > 0.")
+            self._num_mixture_components = num_mixture_components
+
+        if adam_lr is not None:
+            if adam_lr <= 0:
+                raise ValueError("`adam_lr` must be > 0.")
+            self._adam_lr = adam_lr
+
+        if adam_scheduler_gamma is not None:
+            if not (0 < adam_scheduler_gamma <= 1):
+                raise ValueError("`adam_scheduler_gamma` must be in (0, 1].")
+            self._adam_scheduler_gamma = adam_scheduler_gamma
+        elif not hasattr(self, "_adam_scheduler_gamma"):
+            self._adam_scheduler_gamma = None
+
+        if lbfgs_lr is not None:
+            if lbfgs_lr <= 0:
+                raise ValueError("`lbfgs_lr` must be > 0.")
+            self._lbfgs_lr = lbfgs_lr
+
+        if lbfgs_max_iter is not None:
+            if lbfgs_max_iter <= 0:
+                raise ValueError("`lbfgs_max_iter` must be > 0.")
+            self._lbfgs_max_iter = lbfgs_max_iter
+
+        if lbfgs_line_search_fn is not None:
+            if lbfgs_line_search_fn not in ("strong_wolfe",):
+                raise ValueError("`lbfgs_line_search_fn` must be 'strong_wolfe'.")
+            self._lbfgs_line_search_fn = lbfgs_line_search_fn
+        elif not hasattr(self, "_lbfgs_line_search_fn"):
+            self._lbfgs_line_search_fn = "strong_wolfe"
 
     def fit(self, observed: dict[str, Tensor]) -> None:
         """Fit the Laplace posterior to observed data.
@@ -57,13 +183,64 @@ class LaplacePosterior:
         Args:
             observed: Dictionary of observed variable values.
         """
-        MAP = self._fit_map(observed)
-        MAP_rav = self._ravel(MAP)
-        latent_names = self._get_latent_names(MAP)
-        L_cov_rav = self._approx_cov_chol(MAP_rav, observed, latent_names)
+        if not observed:
+            raise ValueError("`observed` must contain at least one observed variable.")
+
+        reference = next(iter(observed.values()))
+        num_samples = len(reference)
+        latent_names = [name for name in self._variables if name not in observed]
+
+        if len(latent_names) == 0:
+            self.state = LaplacePosteriorState(
+                MAP_components_rav=torch.empty(
+                    (num_samples, 1, 0), device=reference.device, dtype=reference.dtype
+                ),
+                L_cov_components_rav=torch.empty(
+                    (num_samples, 1, 0, 0),
+                    device=reference.device,
+                    dtype=reference.dtype,
+                ),
+                component_log_weights=torch.zeros(
+                    (num_samples, 1), device=reference.device, dtype=reference.dtype
+                ),
+                latent_names=[],
+            )
+            return
+
+        candidates, candidate_losses = self._fit_map_candidates(observed, latent_names)
+
+        maps_by_restart = torch.stack(
+            [self._ravel(candidate) for candidate in candidates], dim=0
+        )
+        losses_by_restart = torch.stack(candidate_losses, dim=0)
+
+        maps_by_row = maps_by_restart.permute(1, 0, 2)
+        losses_by_row = losses_by_restart.transpose(0, 1)
+
+        num_components = min(self._num_mixture_components, len(candidates))
+        num_components = max(1, num_components)
+
+        selected_idx = torch.topk(-losses_by_row, k=num_components, dim=1).indices
+        selected_losses = torch.gather(losses_by_row, dim=1, index=selected_idx)
+
+        latent_dim = maps_by_row.shape[-1]
+        selected_idx_expanded = selected_idx.unsqueeze(-1).expand(-1, -1, latent_dim)
+        MAP_components_rav = torch.gather(
+            maps_by_row, dim=1, index=selected_idx_expanded
+        )
+
+        L_cov_components = [
+            self._approx_cov_chol(MAP_components_rav[:, i], observed, latent_names)
+            for i in range(num_components)
+        ]
+        L_cov_components_rav = torch.stack(L_cov_components, dim=1)
+        component_log_weights = torch.log_softmax(-selected_losses, dim=1)
 
         self.state = LaplacePosteriorState(
-            MAP_rav=MAP_rav, L_cov_rav=L_cov_rav, latent_names=latent_names
+            MAP_components_rav=MAP_components_rav,
+            L_cov_components_rav=L_cov_components_rav,
+            component_log_weights=component_log_weights,
+            latent_names=latent_names,
         )
 
     @no_grad()
@@ -91,18 +268,28 @@ class LaplacePosterior:
             raise ValueError("`fit` must be invoked first.")
 
         state = self.state
-        samples_rav = state.MAP_rav.unsqueeze(-1) + torch.sum(
-            state.L_cov_rav.unsqueeze(-1)
-            * torch.randn(
-                size=(
-                    len(state.MAP_rav),
-                    1,
-                    state.MAP_rav.shape[1],
-                    num_samples,
-                )
-            ),
-            dim=1,
+        if len(state.latent_names) == 0:
+            return {}
+
+        batch_size, _, latent_dim = state.MAP_components_rav.shape
+        component_idx = (
+            torch.distributions.Categorical(logits=state.component_log_weights)
+            .sample((num_samples,))
+            .transpose(0, 1)
         )
+
+        batch_idx = torch.arange(
+            batch_size, device=state.MAP_components_rav.device
+        ).unsqueeze(-1)
+        means = state.MAP_components_rav[batch_idx, component_idx]
+        chols = state.L_cov_components_rav[batch_idx, component_idx]
+        eps = torch.randn(
+            (batch_size, num_samples, latent_dim, 1),
+            device=state.MAP_components_rav.device,
+            dtype=state.MAP_components_rav.dtype,
+        )
+        samples_rav = (means + (chols @ eps).squeeze(-1)).permute(0, 2, 1)
+
         return vmap(
             lambda s: self._unravel(s, state.latent_names), in_dims=2, out_dims=1
         )(samples_rav)
@@ -125,54 +312,169 @@ class LaplacePosterior:
         """
         self._state = state
 
-    def _fit_map(self, observed: dict[str, Tensor]) -> dict[str, Tensor]:
+    def _fit_map(
+        self, observed: dict[str, Tensor], latent_names: list[str]
+    ) -> dict[str, Tensor]:
         """Find the MAP estimate of latent variables given observations.
 
-        Uses L-BFGS optimization to find the maximum a posteriori estimate
-        of the latent noise variables.
+        Uses a robust two-part strategy:
+        1) continuation warm-start on progressively less-smoothed objectives,
+        2) second-order refinement (L-BFGS) on the true objective,
+        repeated for a small set of initializations (multi-start), with
+        per-observation best-candidate selection.
 
         Args:
             observed: Dictionary of observed variable values.
+            latent_names: Names of latent variables in optimization order.
 
         Returns:
             Dictionary mapping latent variable names to their MAP noise estimates.
         """
-        size = len(list(observed.values())[0])
-        u_latent = nn.ParameterDict(
-            {
-                name: torch.randn(size)
-                for name in self._variables
-                if name not in observed
+        reference = next(iter(observed.values()))
+        size = len(reference)
+        candidates, candidate_losses = self._fit_map_candidates(observed, latent_names)
+
+        stacked_losses = torch.stack(candidate_losses, dim=0)  # (restarts, batch)
+        best_restart_idx = stacked_losses.argmin(dim=0)
+        row_idx = torch.arange(size, device=reference.device)
+
+        return {
+            name: torch.stack([candidate[name] for candidate in candidates], dim=0)[
+                best_restart_idx, row_idx
+            ]
+            for name in latent_names
+        }
+
+    def _fit_map_candidates(
+        self, observed: dict[str, Tensor], latent_names: list[str]
+    ) -> tuple[list[dict[str, Tensor]], list[Tensor]]:
+        """Generate MAP candidates and their per-sample objective values.
+
+        Args:
+            observed: Dictionary of observed variable values.
+            latent_names: Names of latent variables in optimization order.
+
+        Returns:
+            Tuple ``(candidates, losses)`` where:
+            - candidates is a list of latent dictionaries (one per restart),
+            - losses is a list of per-sample objective tensors, aligned with
+              candidates.
+        """
+        reference = next(iter(observed.values()))
+        size = len(reference)
+
+        candidates: list[dict[str, Tensor]] = []
+        candidate_losses: list[Tensor] = []
+        for i in range(self._num_map_restarts):
+            init_scale = self._restart_init_scales[
+                min(i, len(self._restart_init_scales) - 1)
+            ]
+            u_candidate = self._optimize_map_candidate(
+                observed=observed,
+                latent_names=latent_names,
+                size=size,
+                reference=reference,
+                init_scale=init_scale,
+            )
+            candidates.append(u_candidate)
+            candidate_losses.append(self._posterior_loss_fn(u_candidate, observed))
+
+        return candidates, candidate_losses
+
+    def _optimize_map_candidate(
+        self,
+        observed: dict[str, Tensor],
+        latent_names: list[str],
+        size: int,
+        reference: Tensor,
+        init_scale: float,
+    ) -> dict[str, Tensor]:
+        """Optimize one MAP candidate using continuation + L-BFGS refinement.
+
+        Args:
+            observed: Batched observed values.
+            latent_names: Names of latent variables in optimization order.
+            size: Batch size.
+            reference: A representative observed tensor to inherit dtype/device.
+            init_scale: Std scale of random latent initialization.
+
+        Returns:
+            Candidate MAP latent dictionary for all observations in the batch.
+        """
+        if init_scale == 0.0:
+            u_init = {
+                name: torch.zeros(size, device=reference.device, dtype=reference.dtype)
+                for name in latent_names
             }
+        else:
+            u_init = {
+                name: init_scale
+                * torch.randn(size, device=reference.device, dtype=reference.dtype)
+                for name in latent_names
+            }
+
+        u_latent = nn.ParameterDict(
+            {name: nn.Parameter(value) for name, value in u_init.items()}
         )
 
-        optimizer = torch.optim.LBFGS(list(u_latent.values()), lr=1, max_iter=100)
+        adam = torch.optim.Adam(list(u_latent.values()), lr=self._adam_lr)
+        scheduler = None
+        if self._adam_scheduler_gamma is not None:
+            scheduler = torch.optim.lr_scheduler.ExponentialLR(
+                adam, gamma=self._adam_scheduler_gamma
+            )
+        for obs_sigma_scale in self._continuation_scales:
+            for _ in range(self._continuation_steps):
+                adam.zero_grad()
+                loss = self._posterior_loss_fn(
+                    dict(u_latent), observed, obs_sigma_scale=obs_sigma_scale
+                ).mean()
+                loss.backward()
+                adam.step()
+                if scheduler is not None:
+                    scheduler.step()
+
+        optimizer = torch.optim.LBFGS(
+            list(u_latent.values()),
+            lr=self._lbfgs_lr,
+            max_iter=self._lbfgs_max_iter,
+            line_search_fn=self._lbfgs_line_search_fn,
+        )
 
         def closure() -> Tensor:
             optimizer.zero_grad()
-            loss = self._posterior_loss_fn(u_latent, observed)
+            loss = self._posterior_loss_fn(
+                dict(u_latent), observed, obs_sigma_scale=1.0
+            ).mean()
             loss.backward()
-            # Preserve gradients via backward, but return a detached scalar for LBFGS.
-            return loss.detach()
+            return loss
 
         optimizer.step(closure)
-
         return {name: u.detach().clone() for name, u in u_latent.items()}
 
     def _posterior_loss_fn(
-        self, u_latent: nn.ParameterDict, observed: dict[str, Tensor]
+        self,
+        u_latent: Mapping[str, Tensor],
+        observed: dict[str, Tensor],
+        obs_sigma_scale: float = 1.0,
     ) -> Tensor:
-        """Compute the negative log posterior (up to a constant).
+        """Compute per-sample negative log posterior values.
+
+        This function always returns one loss per observation row. The caller
+        can aggregate (e.g. mean) for optimization, while preserving the
+        per-sample objective needed for batched multi-start selection.
 
         Args:
-            u_latent: Dictionary of latent noise parameters to optimize.
+            u_latent: Dictionary of latent noise values/parameters.
             observed: Dictionary of observed variable values.
+            obs_sigma_scale: Multiplicative scale on observed-noise std used
+                during continuation warm-start (1.0 = true objective).
 
         Returns:
-            The loss value (negative log posterior).
+            Tensor of shape (batch_size,) with per-sample posterior losses.
         """
         values: dict[str, Tensor] = {}
-        loss: Tensor | float = 0.0
+        loss = torch.zeros_like(next(iter(observed.values())))
 
         for name, variable in self._variables.items():
             parents = {
@@ -184,15 +486,15 @@ class LaplacePosterior:
 
             if name in observed:
                 values[name] = observed[name]
-                u = (observed[name] - f_mean) / variable.sigma
+                u = (observed[name] - f_mean) / (variable.sigma * obs_sigma_scale)
 
             else:
                 values[name] = variable.f(parents, u_latent[name], f_mean)
                 u = u_latent[name]
 
-            loss = loss + 0.5 * torch.sum(u**2)
+            loss = loss + 0.5 * u**2
 
-        return loss  # type: ignore[return-value]
+        return loss
 
     @no_grad()
     def _approx_cov_chol(
@@ -227,12 +529,15 @@ class LaplacePosterior:
 
         num_samples = len(u_latent_rav)
         device = u_latent_rav.device
+        dtype = u_latent_rav.dtype
 
         gn_hessian_rav = torch.zeros(
-            (num_samples, latent_dim, latent_dim), device=device
+            (num_samples, latent_dim, latent_dim), device=device, dtype=dtype
         )
-        gn_hessian_rav[:, range(latent_dim), range(latent_dim)] = Tensor(
-            [1 / self._variables[name].sigma ** 2 for name in latent_names]
+        gn_hessian_rav[:, range(latent_dim), range(latent_dim)] = torch.tensor(
+            [1 / self._variables[name].sigma ** 2 for name in latent_names],
+            device=device,
+            dtype=dtype,
         )
 
         for observed_name in observed:
@@ -244,17 +549,16 @@ class LaplacePosterior:
             g = vmap(lambda u, o: grad(partial(f_mean_wrt_u, observed=o))(u))(
                 u_latent_rav, observed
             )
-            gn_hessian_rav += g[:, None] * g[:, :, None]
-
-        if latent_dim == 1:
-            L = 1 / gn_hessian_rav.sqrt()
-        else:
-            Linv = torch.linalg.cholesky(gn_hessian_rav, upper=True)
-            L = torch.linalg.solve_triangular(
-                Linv,
-                torch.eye(latent_dim, requires_grad=False, device=device),
-                upper=False,
+            gn_hessian_rav += (
+                g[:, None] * g[:, :, None] / self._variables[observed_name].sigma ** 2
             )
+
+        Linv = torch.linalg.cholesky(gn_hessian_rav)
+        L = torch.linalg.solve_triangular(
+            Linv,
+            torch.eye(latent_dim, requires_grad=False, device=device, dtype=dtype),
+            upper=False,
+        )
 
         return L
 

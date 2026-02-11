@@ -36,6 +36,17 @@ class CausalBiasMixin(CausalEffectMixin):
         outcome_name: str,
         num_samples: int = 1000,
     ) -> Tensor:
+        """Compute the expected causal bias for each observation.
+
+        Args:
+            observed: Dictionary mapping observed variable names to their values.
+            treatment_name: Name of the treatment variable.
+            outcome_name: Name of the outcome variable.
+            num_samples: Number of posterior samples to draw.
+
+        Returns:
+            Tensor of shape (num_observations,) containing the mean causal bias.
+        """
         return self._compute_causal_bias_samples(
             observed=observed,
             treatment_name=treatment_name,
@@ -50,6 +61,17 @@ class CausalBiasMixin(CausalEffectMixin):
         outcome_name: str,
         num_samples: int = 1000,
     ) -> Tensor:
+        """Compute posterior variance of the causal bias for each observation.
+
+        Args:
+            observed: Dictionary mapping observed variable names to their values.
+            treatment_name: Name of the treatment variable.
+            outcome_name: Name of the outcome variable.
+            num_samples: Number of posterior samples to draw.
+
+        Returns:
+            Tensor of shape (num_observations,) containing bias variance.
+        """
         return self._compute_causal_bias_samples(
             observed=observed,
             treatment_name=treatment_name,
