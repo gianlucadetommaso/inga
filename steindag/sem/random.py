@@ -40,17 +40,18 @@ def _compose_transforms(
     """
 
     def _stabilize(x: Tensor) -> Tensor:
-        # Keep transformed values in a numerically safe range for both
-        # vectorized generation and scalar-per-observation calls used by
-        # causal gradients (effect/bias computation).
+        # Keep transformed values in a numerically safe range with a
+        # pointwise rule that is identical for scalar and batched execution.
+        #
+        # NOTE:
+        # We intentionally avoid batch-level re-centering/re-scaling here.
+        # Those operations make f_mean depend on other samples in the batch,
+        # so data generation (batched) and causal-gradient evaluation
+        # (single-observation/scalar) implement different SEMs.
+        # That mismatch can create artificial, extremely large causal effects
+        # and biases for some seeds.
         safe = torch.nan_to_num(x, nan=0.0, posinf=1e6, neginf=-1e6)
-        safe = safe.clamp(-1e6, 1e6)
-        if safe.ndim == 0:
-            return safe
-
-        mean = safe.mean()
-        std = safe.std(unbiased=False).clamp_min(1.0)
-        return (safe - mean) / std
+        return safe.clamp(-1e6, 1e6)
 
     value = base
     for transform in transforms:
@@ -63,8 +64,9 @@ def _compose_transforms(
 _TRANSFORM_MAP: dict[str, Callable[[Tensor], Tensor]] = {
     "sin": torch.sin,
     "cos": torch.cos,
-    # Bound the exponent input to keep both forward values and derivatives finite.
-    "exp": lambda x: torch.exp(x.clamp(-20.0, 20.0)),
+    # Bound exponent aggressively to avoid pathological derivatives/effects
+    # in random SEMs (d/dx exp(x)=exp(x)).
+    "exp": lambda x: torch.exp(x.clamp(-4.0, 4.0)),
     "tanh": torch.tanh,
 }
 
