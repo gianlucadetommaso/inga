@@ -314,7 +314,12 @@ def main() -> None:
         for regime, metrics in result.items():
             per_regime_pred[regime].append(metrics.pred_mae)
             per_regime_ce[regime].append(metrics.ce_mae)
-        print(f"[seed={seed:02d}] done")
+        print(
+            f"[seed={seed:02d}] "
+            f"standard(pred={result['standard'].pred_mae:.4f}, ce={result['standard'].ce_mae:.4f}) | "
+            f"l2(pred={result['l2'].pred_mae:.4f}, ce={result['l2'].ce_mae:.4f}) | "
+            f"causal_multitask(pred={result['causal_multitask'].pred_mae:.4f}, ce={result['causal_multitask'].ce_mae:.4f})"
+        )
 
     print("\n=== Prediction MAE summary ===")
     for regime in per_regime_pred:

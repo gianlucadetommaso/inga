@@ -4,7 +4,7 @@ import torch
 import pytest
 from steindag.variable.linear import LinearVariable
 from steindag.sem.base import SEM
-from steindag.sem.random import RandomSEMConfig, random_sem
+from steindag.sem.random import RandomSEMConfig, _build_f_mean, random_sem
 
 
 @pytest.fixture
@@ -242,3 +242,41 @@ class TestRandomSEM:
         assert any(
             isinstance(var, FunctionalVariable) for var in sem._variables.values()
         )
+
+    def test_build_f_mean_normalizes_linear_predictor_gradient(self) -> None:
+        """Linear pre-activation gradient should be coefficient-norm standardized."""
+        f_mean = _build_f_mean(
+            parent_names=["A", "B"],
+            coefs={"A": 3.0, "B": 4.0},
+            intercept=0.0,
+            transforms=None,
+        )
+
+        a = torch.tensor(0.0, requires_grad=True)
+        b = torch.tensor(0.0, requires_grad=True)
+        out = f_mean({"A": a, "B": b})
+
+        da, db = torch.autograd.grad(out, [a, b])
+        grad_norm = torch.sqrt(da**2 + db**2)
+
+        expected_norm = torch.tensor((25.0 / 26.0) ** 0.5)
+        assert torch.allclose(grad_norm, expected_norm, atol=1e-6)
+        assert torch.allclose(da, torch.tensor(3.0 / (26.0**0.5)), atol=1e-6)
+        assert torch.allclose(db, torch.tensor(4.0 / (26.0**0.5)), atol=1e-6)
+
+    def test_random_sem_seed22_generate_is_finite_regression(self) -> None:
+        """Regression: seed-22 random SEM generation should not emit NaN/Inf."""
+        sem = random_sem(
+            RandomSEMConfig(
+                num_variables=6,
+                parent_prob=0.6,
+                nonlinear_prob=0.8,
+                sigma_range=(0.7, 1.2),
+                coef_range=(-1.0, 1.0),
+                intercept_range=(-0.5, 0.5),
+                seed=22,
+            )
+        )
+        data = sem.generate(768)
+        for values in data.values():
+            assert torch.isfinite(values).all()
