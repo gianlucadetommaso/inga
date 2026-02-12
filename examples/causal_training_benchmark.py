@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import statistics
 from dataclasses import dataclass
+from collections import defaultdict
 
 import torch
 from torch import Tensor, nn
@@ -43,7 +44,7 @@ class MLPRegressor(nn.Module):
 
 
 class CausalThreeHead(nn.Module):
-    def __init__(self, in_dim: int, hidden_dim: int = 64) -> None:
+    def __init__(self, in_dim: int, num_treatments: int, hidden_dim: int = 64) -> None:
         super().__init__()
         self.trunk = nn.Sequential(
             nn.Linear(in_dim, hidden_dim),
@@ -52,15 +53,15 @@ class CausalThreeHead(nn.Module):
             nn.ReLU(),
         )
         self.pred_head = nn.Linear(hidden_dim, 1)
-        self.ce_head = nn.Linear(hidden_dim, 1)
-        self.cb_head = nn.Linear(hidden_dim, 1)
+        self.ce_head = nn.Linear(hidden_dim, num_treatments)
+        self.cb_head = nn.Linear(hidden_dim, num_treatments)
 
     def forward(self, x: Tensor) -> tuple[Tensor, Tensor, Tensor]:
         h = self.trunk(x)
         return (
             self.pred_head(h).squeeze(-1),
-            self.ce_head(h).squeeze(-1),
-            self.cb_head(h).squeeze(-1),
+            self.ce_head(h),
+            self.cb_head(h),
         )
 
 
@@ -75,12 +76,12 @@ def _summary(values: list[float]) -> dict[str, float]:
 def _estimate_effect_from_gradient(
     model: MLPRegressor,
     x: Tensor,
-    treatment_idx: int,
+    treatment_indices: list[int],
 ) -> Tensor:
     x_grad = x.detach().clone().requires_grad_(True)
     pred = model(x_grad)
     grad = torch.autograd.grad(pred.sum(), x_grad, create_graph=False)[0]
-    return grad[:, treatment_idx].detach()
+    return grad[:, treatment_indices].detach()
 
 
 def train_standard_or_l2(
@@ -88,8 +89,7 @@ def train_standard_or_l2(
     y_train: Tensor,
     x_test: Tensor,
     y_test: Tensor,
-    true_ce_test: Tensor,
-    treatment_idx: int,
+    true_ce_test_by_treatment: Tensor,
     *,
     epochs: int,
     batch_size: int,
@@ -115,20 +115,21 @@ def train_standard_or_l2(
     with torch.no_grad():
         pred_test = model(x_test)
         pred_mae = (pred_test - y_test).abs().mean().item()
-    ce_pred = _estimate_effect_from_gradient(model, x_test, treatment_idx)
-    ce_mae = (ce_pred - true_ce_test).abs().mean().item()
+    ce_pred = _estimate_effect_from_gradient(
+        model, x_test, treatment_indices=list(range(x_test.shape[1]))
+    )
+    ce_mae = (ce_pred - true_ce_test_by_treatment).abs().mean().item()
     return RegimeResult(pred_mae=pred_mae, ce_mae=ce_mae)
 
 
 def train_causal_three_head(
     x_train: Tensor,
     y_train: Tensor,
-    ce_train: Tensor,
-    cb_train: Tensor,
+    ce_train_by_treatment: Tensor,
+    cb_train_by_treatment: Tensor,
     x_test: Tensor,
     y_test: Tensor,
-    true_ce_test: Tensor,
-    treatment_idx: int,
+    true_ce_test_by_treatment: Tensor,
     *,
     epochs: int,
     batch_size: int,
@@ -137,12 +138,15 @@ def train_causal_three_head(
     lambda_cb: float,
     lambda_consistency: float,
 ) -> RegimeResult:
-    model = CausalThreeHead(in_dim=x_train.shape[1])
+    num_treatments = ce_train_by_treatment.shape[1]
+    model = CausalThreeHead(in_dim=x_train.shape[1], num_treatments=num_treatments)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     mse = nn.MSELoss()
     l1 = nn.L1Loss()
 
-    dataset = TensorDataset(x_train, y_train, ce_train, cb_train)
+    dataset = TensorDataset(
+        x_train, y_train, ce_train_by_treatment, cb_train_by_treatment
+    )
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
     model.train()
@@ -156,9 +160,7 @@ def train_causal_three_head(
             ce_loss = l1(ce_hat, ceb)
             cb_loss = l1(cb_hat, cbb)
 
-            grad_pred = torch.autograd.grad(pred.sum(), xb, create_graph=True)[0][
-                :, treatment_idx
-            ]
+            grad_pred = torch.autograd.grad(pred.sum(), xb, create_graph=True)[0]
             consistency_loss = l1(grad_pred, ce_hat + cb_hat)
 
             loss = (
@@ -174,8 +176,65 @@ def train_causal_three_head(
     with torch.no_grad():
         pred_test, ce_test_hat, _ = model(x_test)
         pred_mae = (pred_test - y_test).abs().mean().item()
-        ce_mae = (ce_test_hat - true_ce_test).abs().mean().item()
+        ce_mae = (ce_test_hat - true_ce_test_by_treatment).abs().mean().item()
     return RegimeResult(pred_mae=pred_mae, ce_mae=ce_mae)
+
+
+def _extract_query_bundle(
+    dataset: object,
+) -> tuple[list[str], str, Tensor, Tensor, Tensor]:
+    """Extract one outcome/observed bundle with CE/CB for all observed treatments."""
+    groups: dict[tuple[str, tuple[str, ...]], list[object]] = defaultdict(list)
+    for query in dataset.queries:
+        groups[(query.outcome_name, tuple(query.observed_names))].append(query)
+
+    (outcome_name, observed_tuple), _ = max(groups.items(), key=lambda kv: len(kv[1]))
+    feature_names = list(observed_tuple)
+
+    ce_cols: list[Tensor] = []
+    cb_cols: list[Tensor] = []
+    for treatment_name in feature_names:
+        key = (treatment_name, outcome_name, tuple(feature_names))
+        ce_cols.append(dataset.causal_effects[key])
+        cb_cols.append(dataset.causal_biases[key])
+
+    y_all = dataset.data[outcome_name]
+    return (
+        feature_names,
+        outcome_name,
+        y_all,
+        torch.stack(ce_cols, dim=1),
+        torch.stack(cb_cols, dim=1),
+    )
+
+
+def _print_table(
+    title: str,
+    headers: list[str],
+    rows: list[list[str]],
+    separator_after: set[int] | None = None,
+) -> None:
+    widths = [len(h) for h in headers]
+    for row in rows:
+        for i, cell in enumerate(row):
+            widths[i] = max(widths[i], len(cell))
+
+    sep = "+-" + "-+-".join("-" * w for w in widths) + "-+"
+
+    def fmt(row: list[str]) -> str:
+        return (
+            "| " + " | ".join(row[i].ljust(widths[i]) for i in range(len(row))) + " |"
+        )
+
+    print(f"\n{title}")
+    print(sep)
+    print(fmt(headers))
+    print(sep)
+    for idx, row in enumerate(rows):
+        print(fmt(row))
+        if separator_after is not None and idx in separator_after:
+            print(sep)
+    print(sep)
 
 
 def run_seed(
@@ -208,18 +267,8 @@ def run_seed(
         )
     )
 
-    sem = dataset.sem
-    query = dataset.queries[0]
-    treatment_name = query.treatment_name
-    outcome_name = query.outcome_name
-    feature_names = list(query.observed_names)
-    treatment_idx = feature_names.index(treatment_name)
-
+    feature_names, _outcome_name, y_all, ce_all, cb_all = _extract_query_bundle(dataset)
     x_all = torch.stack([dataset.data[name] for name in feature_names], dim=1)
-    y_all = dataset.data[outcome_name]
-    key = (treatment_name, outcome_name, tuple(feature_names))
-    ce_all = dataset.causal_effects[key]
-    cb_all = dataset.causal_biases[key]
 
     x_train_raw, x_test_raw = x_all[:train_size], x_all[train_size:]
     y_train, y_test = y_all[:train_size], y_all[train_size:]
@@ -232,7 +281,7 @@ def run_seed(
     x_test = (x_test_raw - mean) / std
 
     # query_samples kept as an arg for API symmetry / easy experimentation.
-    _ = sem, query_samples
+    _ = query_samples
 
     standard = train_standard_or_l2(
         x_train,
@@ -240,7 +289,6 @@ def run_seed(
         x_test,
         y_test,
         ce_test,
-        treatment_idx,
         epochs=epochs,
         batch_size=batch_size,
         lr=lr,
@@ -252,7 +300,6 @@ def run_seed(
         x_test,
         y_test,
         ce_test,
-        treatment_idx,
         epochs=epochs,
         batch_size=batch_size,
         lr=lr,
@@ -266,7 +313,6 @@ def run_seed(
         x_test,
         y_test,
         ce_test,
-        treatment_idx,
         epochs=epochs,
         batch_size=batch_size,
         lr=lr,
@@ -302,6 +348,7 @@ def main() -> None:
         "l2": [],
         "causal_multitask": [],
     }
+    per_seed_rows: list[list[str]] = []
 
     for seed in range(args.num_seeds):
         result = run_seed(
@@ -313,31 +360,78 @@ def main() -> None:
             batch_size=args.batch_size,
             lr=args.lr,
         )
+        seed_rows: list[list[str]] = []
         for regime, metrics in result.items():
             per_regime_pred[regime].append(metrics.pred_mae)
             per_regime_ce[regime].append(metrics.ce_mae)
-        print(
-            f"[seed={seed:02d}] "
-            f"standard(pred={result['standard'].pred_mae:.4f}, ce={result['standard'].ce_mae:.4f}) | "
-            f"l2(pred={result['l2'].pred_mae:.4f}, ce={result['l2'].ce_mae:.4f}) | "
-            f"causal_multitask(pred={result['causal_multitask'].pred_mae:.4f}, ce={result['causal_multitask'].ce_mae:.4f})"
+            row = [
+                f"{seed:02d}",
+                regime,
+                f"{metrics.pred_mae:.6f}",
+                f"{metrics.ce_mae:.6f}",
+            ]
+            per_seed_rows.append(row)
+            seed_rows.append(row)
+
+        _print_table(
+            title=f"Per-seed results (seed={seed:02d})",
+            headers=[
+                "seed",
+                "regime",
+                "prediction_mae",
+                "causal_effect_mae_avg_over_treatments",
+            ],
+            rows=seed_rows,
         )
 
-    print("\n=== Prediction MAE summary ===")
+    regimes_per_seed = len(per_regime_pred)
+    separator_after = {
+        idx
+        for idx in range(regimes_per_seed - 1, len(per_seed_rows), regimes_per_seed)
+        if idx < len(per_seed_rows) - 1
+    }
+
+    _print_table(
+        "All per-seed results",
+        [
+            "seed",
+            "regime",
+            "prediction_mae",
+            "causal_effect_mae_avg_over_treatments",
+        ],
+        per_seed_rows,
+        separator_after=separator_after,
+    )
+
+    summary_rows: list[list[str]] = []
     for regime in per_regime_pred:
-        s = _summary(per_regime_pred[regime])
-        print(
-            f"{regime:16s} mean={s['mean']:.6f} "
-            f"median={s['median']:.6f} std={s['std']:.6f}"
+        pred_stats = _summary(per_regime_pred[regime])
+        ce_stats = _summary(per_regime_ce[regime])
+        summary_rows.append(
+            [
+                regime,
+                f"{pred_stats['mean']:.6f}",
+                f"{pred_stats['median']:.6f}",
+                f"{pred_stats['std']:.6f}",
+                f"{ce_stats['mean']:.6f}",
+                f"{ce_stats['median']:.6f}",
+                f"{ce_stats['std']:.6f}",
+            ]
         )
 
-    print("\n=== Causal Effect MAE summary ===")
-    for regime in per_regime_ce:
-        s = _summary(per_regime_ce[regime])
-        print(
-            f"{regime:16s} mean={s['mean']:.6f} "
-            f"median={s['median']:.6f} std={s['std']:.6f}"
-        )
+    _print_table(
+        "Summary across seeds",
+        [
+            "regime",
+            "pred_mean",
+            "pred_median",
+            "pred_std",
+            "ce_mean",
+            "ce_median",
+            "ce_std",
+        ],
+        summary_rows,
+    )
 
 
 if __name__ == "__main__":
