@@ -80,12 +80,14 @@ class SEMDatasetConfig:
     num_queries: int = 10
     min_observed: int = 1
     seed: int | None = None
+    treatment_name: str | None = None
 
 
 def _sample_query(
     rng: random.Random,
     variable_names: list[str],
     min_observed: int,
+    treatment_name: str | None = None,
 ) -> CausalQueryConfig:
     """Sample a treatment/outcome/observed configuration.
 
@@ -94,20 +96,37 @@ def _sample_query(
     if len(variable_names) < 2:
         raise ValueError("At least two variables are required for a causal query.")
 
-    treatment_name = rng.choice(variable_names)
-    candidate_outcomes = [name for name in variable_names if name != treatment_name]
+    if treatment_name is not None and treatment_name not in variable_names:
+        raise ValueError(f"Unknown treatment_name '{treatment_name}'.")
+
+    candidate_outcomes = (
+        [name for name in variable_names if name != treatment_name]
+        if treatment_name is not None
+        else variable_names
+    )
     outcome_name = rng.choice(candidate_outcomes)
 
     observed_candidates = [
-        name for name in variable_names if name not in {treatment_name, outcome_name}
+        name
+        for name in variable_names
+        if name != outcome_name and (treatment_name is None or name != treatment_name)
     ]
-    max_observed = max(min_observed, len(observed_candidates))
-    observed_size = rng.randint(min_observed, max_observed)
-    observed_subset = rng.sample(observed_candidates, k=observed_size)
-    observed_names = [treatment_name, *observed_subset]
+    required_observed = (
+        min_observed if treatment_name is None else max(0, min_observed - 1)
+    )
+    max_observed = max(required_observed, len(observed_candidates))
+    lower_observed = min_observed if treatment_name is None else max(1, min_observed)
+    observed_size = rng.randint(lower_observed, max_observed)
+    if treatment_name is None:
+        observed_names = rng.sample(observed_candidates, k=observed_size)
+        sampled_treatment_name = observed_names[0]
+    else:
+        observed_subset = rng.sample(observed_candidates, k=max(0, observed_size - 1))
+        observed_names = [treatment_name, *observed_subset]
+        sampled_treatment_name = treatment_name
 
     return CausalQueryConfig(
-        treatment_name=treatment_name,
+        treatment_name=sampled_treatment_name,
         outcome_name=outcome_name,
         observed_names=observed_names,
     )
@@ -130,14 +149,32 @@ def generate_sem_dataset(config: SEMDatasetConfig) -> SEMDataset:
             rng,
             variable_names=variable_names,
             min_observed=config.min_observed,
+            treatment_name=config.treatment_name,
         )
         for _ in range(config.num_queries)
     ]
 
+    expanded_queries: list[CausalQueryConfig] = []
+    for query in queries:
+        if config.treatment_name is not None:
+            expanded_queries.append(query)
+            continue
+
+        # By default, synthesize treatment-specific causal effects/biases for
+        # all observed variables so each input feature has causal annotations.
+        for treatment_name in query.observed_names:
+            expanded_queries.append(
+                CausalQueryConfig(
+                    treatment_name=treatment_name,
+                    outcome_name=query.outcome_name,
+                    observed_names=list(query.observed_names),
+                )
+            )
+
     causal_effects: dict[tuple[str, str, tuple[str, ...]], Tensor] = {}
     causal_biases: dict[tuple[str, str, tuple[str, ...]], Tensor] = {}
 
-    for query in queries:
+    for query in expanded_queries:
         observed = {name: data[name] for name in query.observed_names}
         sem.posterior.fit(observed)
         effect = sem.causal_effect(
@@ -161,7 +198,7 @@ def generate_sem_dataset(config: SEMDatasetConfig) -> SEMDataset:
     return SEMDataset(
         sem=sem,
         data=data,
-        queries=queries,
+        queries=expanded_queries,
         causal_effects=causal_effects,
         causal_biases=causal_biases,
     )
