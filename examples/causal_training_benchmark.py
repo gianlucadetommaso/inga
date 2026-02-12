@@ -10,9 +10,7 @@ Compares three regimes over multiple random seeds:
 from __future__ import annotations
 
 import argparse
-import statistics
 from dataclasses import dataclass
-from collections import defaultdict
 
 import torch
 from torch import Tensor, nn
@@ -20,6 +18,8 @@ from torch.utils.data import DataLoader, TensorDataset
 
 from steindag.sem.dataset import SEMDatasetConfig, generate_sem_dataset
 from steindag.sem.random import RandomSEMConfig
+
+from examples.utils import extract_observed_bundle, print_table, summary
 
 
 @dataclass
@@ -63,14 +63,6 @@ class CausalThreeHead(nn.Module):
             self.ce_head(h),
             self.cb_head(h),
         )
-
-
-def _summary(values: list[float]) -> dict[str, float]:
-    return {
-        "mean": float(statistics.mean(values)),
-        "median": float(statistics.median(values)),
-        "std": float(statistics.stdev(values)) if len(values) > 1 else 0.0,
-    }
 
 
 def _estimate_effect_from_gradient(
@@ -180,63 +172,6 @@ def train_causal_three_head(
     return RegimeResult(pred_mae=pred_mae, ce_mae=ce_mae)
 
 
-def _extract_query_bundle(
-    dataset: object,
-) -> tuple[list[str], str, Tensor, Tensor, Tensor]:
-    """Extract one outcome/observed bundle with CE/CB for all observed treatments."""
-    groups: dict[tuple[str, tuple[str, ...]], list[object]] = defaultdict(list)
-    for query in dataset.queries:
-        groups[(query.outcome_name, tuple(query.observed_names))].append(query)
-
-    (outcome_name, observed_tuple), _ = max(groups.items(), key=lambda kv: len(kv[1]))
-    feature_names = list(observed_tuple)
-
-    ce_cols: list[Tensor] = []
-    cb_cols: list[Tensor] = []
-    for treatment_name in feature_names:
-        key = (treatment_name, outcome_name, tuple(feature_names))
-        ce_cols.append(dataset.causal_effects[key])
-        cb_cols.append(dataset.causal_biases[key])
-
-    y_all = dataset.data[outcome_name]
-    return (
-        feature_names,
-        outcome_name,
-        y_all,
-        torch.stack(ce_cols, dim=1),
-        torch.stack(cb_cols, dim=1),
-    )
-
-
-def _print_table(
-    title: str,
-    headers: list[str],
-    rows: list[list[str]],
-    separator_after: set[int] | None = None,
-) -> None:
-    widths = [len(h) for h in headers]
-    for row in rows:
-        for i, cell in enumerate(row):
-            widths[i] = max(widths[i], len(cell))
-
-    sep = "+-" + "-+-".join("-" * w for w in widths) + "-+"
-
-    def fmt(row: list[str]) -> str:
-        return (
-            "| " + " | ".join(row[i].ljust(widths[i]) for i in range(len(row))) + " |"
-        )
-
-    print(f"\n{title}")
-    print(sep)
-    print(fmt(headers))
-    print(sep)
-    for idx, row in enumerate(rows):
-        print(fmt(row))
-        if separator_after is not None and idx in separator_after:
-            print(sep)
-    print(sep)
-
-
 def run_seed(
     seed: int,
     *,
@@ -267,7 +202,9 @@ def run_seed(
         )
     )
 
-    feature_names, _outcome_name, y_all, ce_all, cb_all = _extract_query_bundle(dataset)
+    feature_names, _outcome_name, y_all, ce_all, cb_all = extract_observed_bundle(
+        dataset, strategy="max_treatments"
+    )
     x_all = torch.stack([dataset.data[name] for name in feature_names], dim=1)
 
     x_train_raw, x_test_raw = x_all[:train_size], x_all[train_size:]
@@ -373,7 +310,7 @@ def main() -> None:
             per_seed_rows.append(row)
             seed_rows.append(row)
 
-        _print_table(
+        print_table(
             title=f"Per-seed results (seed={seed:02d})",
             headers=[
                 "seed",
@@ -391,7 +328,7 @@ def main() -> None:
         if idx < len(per_seed_rows) - 1
     }
 
-    _print_table(
+    print_table(
         "All per-seed results",
         [
             "seed",
@@ -405,8 +342,8 @@ def main() -> None:
 
     summary_rows: list[list[str]] = []
     for regime in per_regime_pred:
-        pred_stats = _summary(per_regime_pred[regime])
-        ce_stats = _summary(per_regime_ce[regime])
+        pred_stats = summary(per_regime_pred[regime])
+        ce_stats = summary(per_regime_ce[regime])
         summary_rows.append(
             [
                 regime,
@@ -419,7 +356,7 @@ def main() -> None:
             ]
         )
 
-    _print_table(
+    print_table(
         "Summary across seeds",
         [
             "regime",

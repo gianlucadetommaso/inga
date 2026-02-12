@@ -25,4 +25,7 @@ jobs:
         run: uv sync --dev
 
       - name: Run tests
-        run: uv run python -m pytest tests -v
+        run: uv run python -m pytest tests -v -m "not integration"
+
+      - name: Run integration tests
+        run: uv run python -m pytest tests_integration -v -m integration

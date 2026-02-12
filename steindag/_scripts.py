@@ -8,7 +8,22 @@ COMMANDS: dict[str, tuple[list[str], str]] = {
     "fmt": (["ruff", "format", "."], "Format"),
     "lint": (["ruff", "check", "--fix", "."], "Lint fix"),
     "typecheck": (["mypy", "steindag", "tests"], "Type check"),
-    "test": ([sys.executable, "-m", "pytest", "tests", "-v"], "Tests"),
+    "test": (
+        [sys.executable, "-m", "pytest", "tests", "-v", "-m", "not integration"],
+        "Unit tests",
+    ),
+    "test_integration": (
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "tests_integration",
+            "-v",
+            "-m",
+            "integration",
+        ],
+        "Integration tests",
+    ),
 }
 
 
@@ -46,11 +61,12 @@ def dev() -> None:
         uv run dev fmt          # Format only
         uv run dev lint         # Lint only
         uv run dev test         # Test only
+        uv run dev test_integration  # Integration tests only
         uv run dev fmt lint     # Format and lint
         uv run dev fmt lint test  # Format, lint, and test
         uv run dev              # With no args, runs all: fmt, lint, typecheck, test
 
-    Available commands: fmt, lint, typecheck, test
+    Available commands: fmt, lint, typecheck, test, test_integration
     """
     args = sys.argv[1:]
 
