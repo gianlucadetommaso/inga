@@ -79,6 +79,15 @@ def _build_f_mean(
 ) -> Callable[[dict[str, Tensor]], Tensor]:
     """Build a mean function from linear combination and optional transforms."""
 
+    # Gradient-standardized linear predictor:
+    # normalize by Euclidean coefficient scale so random draw realizations keep
+    # a controlled local sensitivity before nonlinear transforms.
+    preact_scale = (
+        (1.0 + sum(coefs[parent] ** 2 for parent in parent_names)) ** 0.5
+        if parent_names
+        else 1.0
+    )
+
     def f_mean(parents: dict[str, Tensor]) -> Tensor:
         if not parent_names:
             base = torch.tensor(intercept)
@@ -86,6 +95,7 @@ def _build_f_mean(
             base = torch.tensor(intercept)
             for parent_name in parent_names:
                 base = base + coefs[parent_name] * parents[parent_name]
+            base = base / preact_scale
 
         if transforms:
             return _compose_transforms(base, transforms)

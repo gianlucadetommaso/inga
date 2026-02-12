@@ -87,6 +87,7 @@ class TestLaplacePosteriorInit:
             lbfgs_lr=0.8,
             lbfgs_max_iter=12,
             lbfgs_line_search_fn="strong_wolfe",
+            jacobian_norm_cap=250.0,
         )
 
         assert posterior._continuation_scales == (2.0, 1.0)
@@ -99,6 +100,7 @@ class TestLaplacePosteriorInit:
         assert posterior._lbfgs_lr == 0.8
         assert posterior._lbfgs_max_iter == 12
         assert posterior._lbfgs_line_search_fn == "strong_wolfe"
+        assert posterior._jacobian_norm_cap == 250.0
 
     def test_configure_map_options_updates_existing_posterior(
         self, posterior: LaplacePosterior
@@ -115,6 +117,7 @@ class TestLaplacePosteriorInit:
             lbfgs_lr=0.5,
             lbfgs_max_iter=20,
             lbfgs_line_search_fn="strong_wolfe",
+            jacobian_norm_cap=500.0,
         )
 
         assert posterior._continuation_scales == (4.0, 2.0, 1.0)
@@ -126,6 +129,7 @@ class TestLaplacePosteriorInit:
         assert posterior._adam_scheduler_gamma == 0.98
         assert posterior._lbfgs_lr == 0.5
         assert posterior._lbfgs_max_iter == 20
+        assert posterior._jacobian_norm_cap == 500.0
 
     @pytest.mark.parametrize(
         "kwargs",
@@ -141,6 +145,7 @@ class TestLaplacePosteriorInit:
             {"lbfgs_lr": 0.0},
             {"lbfgs_max_iter": 0},
             {"lbfgs_line_search_fn": "invalid"},
+            {"jacobian_norm_cap": 0.0},
         ],
     )
     def test_configure_map_options_validates_inputs(
@@ -630,3 +635,39 @@ class TestLaplacePosteriorNonlinearRobustness:
             samples = sem.posterior.sample(128)
             for sample in samples.values():
                 self._assert_finite_and_bounded(sample)
+
+
+class TestLaplacePosteriorJacobianStandardization:
+    """Tests for Jacobian-norm standardization in GN Hessian."""
+
+    def test_jacobian_norm_cap_controls_gn_curvature(
+        self, variables: dict[str, Variable]
+    ) -> None:
+        """Smaller jacobian_norm_cap should yield larger covariance factors."""
+        observed = {"X": torch.zeros(6)}
+        latent_names = ["Z", "Y"]
+        u_latent_rav = torch.zeros(6, 2)
+
+        posterior_lo = LaplacePosterior(variables=variables, jacobian_norm_cap=1.0)
+        posterior_hi = LaplacePosterior(variables=variables, jacobian_norm_cap=1e9)
+
+        def fake_f_mean_u(
+            u_latent_rav: Tensor,
+            observed: dict[str, Tensor],
+            observed_name: str,
+            latent_names: list[str],
+        ) -> Tensor:
+            # Constant very large gradient wrt latent variables.
+            return 1e8 * (u_latent_rav[0] + 0.5 * u_latent_rav[1])
+
+        posterior_lo._f_mean_u = fake_f_mean_u  # type: ignore[method-assign]
+        posterior_hi._f_mean_u = fake_f_mean_u  # type: ignore[method-assign]
+
+        L_lo = posterior_lo._approx_cov_chol(u_latent_rav, observed, latent_names)
+        L_hi = posterior_hi._approx_cov_chol(u_latent_rav, observed, latent_names)
+
+        assert torch.isfinite(L_lo).all()
+        assert torch.isfinite(L_hi).all()
+        # Stronger cap (smaller value) means weaker GN curvature and thus
+        # larger posterior covariance factor magnitude.
+        assert L_lo.abs().mean() > L_hi.abs().mean()
