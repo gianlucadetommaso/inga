@@ -248,9 +248,7 @@ class LaplacePosterior:
             torch.full_like(losses_by_row, float("inf")),
         )
         selected_idx = torch.topk(-safe_losses_by_row, k=num_components, dim=1).indices
-        selected_losses = torch.gather(
-            safe_losses_by_row, dim=1, index=selected_idx
-        )
+        selected_losses = torch.gather(safe_losses_by_row, dim=1, index=selected_idx)
 
         latent_dim = maps_by_row.shape[-1]
         selected_idx_expanded = selected_idx.unsqueeze(-1).expand(-1, -1, latent_dim)

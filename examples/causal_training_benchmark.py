@@ -18,7 +18,7 @@ from torch import Tensor, nn
 from torch.utils.data import DataLoader, TensorDataset
 
 from steindag.sem.dataset import SEMDatasetConfig, generate_sem_dataset
-from steindag.sem.random import RandomSEMConfig, random_sem
+from steindag.sem.random import RandomSEMConfig
 
 
 @dataclass
@@ -100,7 +100,9 @@ def train_standard_or_l2(
     optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
     mse = nn.MSELoss()
 
-    loader = DataLoader(TensorDataset(x_train, y_train), batch_size=batch_size, shuffle=True)
+    loader = DataLoader(
+        TensorDataset(x_train, y_train), batch_size=batch_size, shuffle=True
+    )
     model.train()
     for _ in range(epochs):
         for xb, yb in loader:
