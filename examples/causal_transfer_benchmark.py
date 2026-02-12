@@ -16,7 +16,6 @@ so treatment count varies. We solve this via padding + masking.
 from __future__ import annotations
 
 import argparse
-import statistics
 from dataclasses import dataclass
 
 import torch
@@ -26,153 +25,22 @@ from torch.utils.data import DataLoader
 from steindag.sem.dataset import SEMDatasetConfig, generate_sem_dataset
 from steindag.sem.random import RandomSEMConfig
 
+from examples.utils import (
+    extract_observed_bundle,
+    masked_l1,
+    pad_2d,
+    pad_2d_with_mask,
+    permute_columns,
+    print_table,
+    print_table_grouped,
+    summary,
+)
+
 
 @dataclass
 class RegimeResult:
     pred_mae: float
     ce_mae: float
-
-
-def _summary(values: list[float]) -> dict[str, float]:
-    return {
-        "mean": float(statistics.mean(values)),
-        "median": float(statistics.median(values)),
-        "std": float(statistics.stdev(values)) if len(values) > 1 else 0.0,
-    }
-
-
-def _print_table(title: str, headers: list[str], rows: list[list[str]]) -> None:
-    widths = [len(h) for h in headers]
-    for row in rows:
-        for i, cell in enumerate(row):
-            widths[i] = max(widths[i], len(cell))
-
-    sep = "+-" + "-+-".join("-" * w for w in widths) + "-+"
-
-    def fmt(row: list[str]) -> str:
-        return (
-            "| " + " | ".join(row[i].ljust(widths[i]) for i in range(len(row))) + " |"
-        )
-
-    print(f"\n{title}")
-    print(sep)
-    print(fmt(headers))
-    print(sep)
-    for row in rows:
-        print(fmt(row))
-    print(sep)
-
-
-def _print_table_grouped(
-    title: str,
-    headers: list[str],
-    rows: list[list[str]],
-    group_col: int,
-) -> None:
-    """Print table and insert separator lines when group_col changes."""
-    if not rows:
-        _print_table(title, headers, rows)
-        return
-
-    widths = [len(h) for h in headers]
-    for row in rows:
-        for i, cell in enumerate(row):
-            widths[i] = max(widths[i], len(cell))
-
-    sep = "+-" + "-+-".join("-" * w for w in widths) + "-+"
-
-    def fmt(row: list[str]) -> str:
-        return (
-            "| " + " | ".join(row[i].ljust(widths[i]) for i in range(len(row))) + " |"
-        )
-
-    print(f"\n{title}")
-    print(sep)
-    print(fmt(headers))
-    print(sep)
-
-    prev_group = rows[0][group_col]
-    for row in rows:
-        group = row[group_col]
-        if group != prev_group:
-            print(sep)
-            prev_group = group
-        print(fmt(row))
-    print(sep)
-
-
-def _extract_bundle(dataset: object) -> tuple[list[str], str, Tensor, Tensor, Tensor]:
-    """Pick one query group and return features/outcome and CE matrix.
-
-    Returns:
-        feature_names: list[str]
-        outcome_name: str
-        y_all: (N,)
-        ce_all: (N, T)
-        cb_all: (N, T)
-    """
-    # In generation we use num_queries=1 so dataset.queries has one observed-set group.
-    query0 = dataset.queries[0]
-    outcome_name = query0.outcome_name
-    feature_names = list(query0.observed_names)
-
-    # One CE per observed treatment.
-    ce_cols: list[Tensor] = []
-    cb_cols: list[Tensor] = []
-    for treatment_name in feature_names:
-        key = (treatment_name, outcome_name, tuple(feature_names))
-        ce_cols.append(dataset.causal_effects[key])
-        cb_cols.append(dataset.causal_biases[key])
-
-    y_all = dataset.data[outcome_name]
-    ce_all = torch.stack(ce_cols, dim=1)
-    cb_all = torch.stack(cb_cols, dim=1)
-    return feature_names, outcome_name, y_all, ce_all, cb_all
-
-
-def _pad_2d_with_mask(x: Tensor, max_features: int) -> tuple[Tensor, Tensor]:
-    """Pad a 2D tensor (N,T) to (N,max_T) and return (padded, mask)."""
-    n, t = x.shape
-    mask = torch.zeros(n, max_features, dtype=torch.float32, device=x.device)
-    mask[:, :t] = 1.0
-    if t == max_features:
-        return x, mask
-    pad = torch.zeros(n, max_features - t, dtype=x.dtype, device=x.device)
-    return torch.cat([x, pad], dim=1), mask
-
-
-def _pad_2d(x: Tensor, max_features: int) -> Tensor:
-    """Pad a 2D tensor (N,T) to (N,max_T)."""
-    n, t = x.shape
-    if t == max_features:
-        return x
-    pad = torch.zeros(n, max_features - t, dtype=x.dtype, device=x.device)
-    return torch.cat([x, pad], dim=1)
-
-
-def _permute_columns(
-    x: Tensor,
-    mask: Tensor,
-    *ys: Tensor,
-    generator: torch.Generator | None = None,
-) -> tuple[Tensor, Tensor, tuple[Tensor, ...]]:
-    """Apply the same random feature permutation to x/mask and any aligned targets.
-
-    All tensors must be shaped (N, max_T).
-    """
-    max_t = x.shape[1]
-    perm = torch.randperm(max_t, device=x.device, generator=generator)
-    x_p = x[:, perm]
-    mask_p = mask[:, perm]
-    ys_p = tuple(y[:, perm] for y in ys)
-    return x_p, mask_p, ys_p
-
-
-def _masked_l1(pred: Tensor, target: Tensor, mask: Tensor) -> Tensor:
-    # pred/target: (B,max_T), mask: (B,max_T)
-    err = (pred - target).abs() * mask
-    denom = mask.sum().clamp_min(1.0)
-    return err.sum() / denom
 
 
 class Predictor(nn.Module):
@@ -233,7 +101,7 @@ def _evaluate_baseline(
         pred_g = model(xg, mask)
         grad = torch.autograd.grad(pred_g.sum(), xg, create_graph=False)[0]
         ce_pred = grad
-        ce_mae = _masked_l1(ce_pred, ce_true, mask).item()
+        ce_mae = masked_l1(ce_pred, ce_true, mask).item()
     return RegimeResult(pred_mae=pred_mae, ce_mae=ce_mae)
 
 
@@ -248,7 +116,7 @@ def _evaluate_causal(
     model.eval()
     pred, ce_hat, _ = model(x, mask)
     pred_mae = (pred - y).abs().mean().item()
-    ce_mae = _masked_l1(ce_hat, ce_true, mask).item()
+    ce_mae = masked_l1(ce_hat, ce_true, mask).item()
     return RegimeResult(pred_mae=pred_mae, ce_mae=ce_mae)
 
 
@@ -293,7 +161,7 @@ def main() -> None:
                 seed=seed_i,
             )
         )
-        feature_names, _, _, _, _ = _extract_bundle(ds)
+        feature_names, _, _, _, _ = extract_observed_bundle(ds, strategy="first")
         max_t = max(max_t, len(feature_names))
         datasets.append(ds)
 
@@ -307,17 +175,19 @@ def main() -> None:
     ce_train_all: list[Tensor] = []
     cb_train_all: list[Tensor] = []
     for ds in train_datasets:
-        feature_names, _, y_all, ce_all, cb_all = _extract_bundle(ds)
+        feature_names, _, y_all, ce_all, cb_all = extract_observed_bundle(
+            ds, strategy="first"
+        )
         x_all = torch.stack([ds.data[name] for name in feature_names], dim=1)
-        x_pad, mask = _pad_2d_with_mask(x_all, max_t)
-        ce_pad = _pad_2d(ce_all, max_t)
-        cb_pad = _pad_2d(cb_all, max_t)
+        x_pad, mask = pad_2d_with_mask(x_all, max_t)
+        ce_pad = pad_2d(ce_all, max_t)
+        cb_pad = pad_2d(cb_all, max_t)
 
         # Permutation augmentation: destroy positional shortcuts by permuting
         # feature order (and aligned causal targets) per dataset.
         g = torch.Generator(device=x_pad.device)
         g.manual_seed(args.seed + 10_000 + len(x_train_all))
-        x_pad, mask, (ce_pad, cb_pad) = _permute_columns(
+        x_pad, mask, (ce_pad, cb_pad) = permute_columns(
             x_pad, mask, ce_pad, cb_pad, generator=g
         )
 
@@ -378,10 +248,10 @@ def main() -> None:
             opt_causal.zero_grad()
             pred_c, ce_hat, cb_hat = causal(xc, mb)
             loss_pred = mse(pred_c, yb)
-            loss_ce = _masked_l1(ce_hat, ceb, mb)
-            loss_cb = _masked_l1(cb_hat, cbb, mb)
+            loss_ce = masked_l1(ce_hat, ceb, mb)
+            loss_cb = masked_l1(cb_hat, cbb, mb)
             grad_pred = torch.autograd.grad(pred_c.sum(), xc, create_graph=True)[0]
-            loss_cons = _masked_l1(grad_pred, ce_hat + cb_hat, mb)
+            loss_cons = masked_l1(grad_pred, ce_hat + cb_hat, mb)
             loss = (
                 loss_pred
                 + args.lambda_ce * loss_ce
@@ -397,15 +267,17 @@ def main() -> None:
     per_regime_ce: dict[str, list[float]] = {"baseline": [], "l2": [], "causal": []}
 
     for j, ds in enumerate(test_datasets):
-        feature_names, _, y_all, ce_all, _cb_all = _extract_bundle(ds)
+        feature_names, _, y_all, ce_all, _cb_all = extract_observed_bundle(
+            ds, strategy="first"
+        )
         x_all = torch.stack([ds.data[name] for name in feature_names], dim=1)
-        x_pad, mask = _pad_2d_with_mask(x_all, max_t)
-        ce_pad = _pad_2d(ce_all, max_t)
+        x_pad, mask = pad_2d_with_mask(x_all, max_t)
+        ce_pad = pad_2d(ce_all, max_t)
 
         # Permute at test time as well (consistent with training invariance goal).
         g = torch.Generator(device=x_pad.device)
         g.manual_seed(args.seed + 20_000 + j)
-        x_pad, mask, (ce_pad,) = _permute_columns(x_pad, mask, ce_pad, generator=g)
+        x_pad, mask, (ce_pad,) = permute_columns(x_pad, mask, ce_pad, generator=g)
 
         mean = x_pad.mean(dim=0, keepdim=True)
         std = x_pad.std(dim=0, keepdim=True).clamp_min(1e-6)
@@ -432,7 +304,7 @@ def main() -> None:
                 ]
             )
 
-    _print_table_grouped(
+    print_table_grouped(
         "Test dataset results",
         [
             "test_ds",
@@ -447,8 +319,8 @@ def main() -> None:
 
     summary_rows: list[list[str]] = []
     for regime in ["baseline", "l2", "causal"]:
-        p = _summary(per_regime_pred[regime])
-        c = _summary(per_regime_ce[regime])
+        p = summary(per_regime_pred[regime])
+        c = summary(per_regime_ce[regime])
         summary_rows.append(
             [
                 regime,
@@ -459,7 +331,7 @@ def main() -> None:
             ]
         )
 
-    _print_table(
+    print_table(
         "Transfer summary (across test datasets)",
         [
             "regime",

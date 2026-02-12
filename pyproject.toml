@@ -22,3 +22,8 @@ dev = "steindag._scripts:dev"
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+markers = [
+    "integration: slower end-to-end tests (e.g. running example scripts)",
+]
