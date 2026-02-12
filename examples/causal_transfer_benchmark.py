@@ -50,7 +50,9 @@ def _print_table(title: str, headers: list[str], rows: list[list[str]]) -> None:
     sep = "+-" + "-+-".join("-" * w for w in widths) + "-+"
 
     def fmt(row: list[str]) -> str:
-        return "| " + " | ".join(row[i].ljust(widths[i]) for i in range(len(row))) + " |"
+        return (
+            "| " + " | ".join(row[i].ljust(widths[i]) for i in range(len(row))) + " |"
+        )
 
     print(f"\n{title}")
     print(sep)
@@ -80,7 +82,9 @@ def _print_table_grouped(
     sep = "+-" + "-+-".join("-" * w for w in widths) + "-+"
 
     def fmt(row: list[str]) -> str:
-        return "| " + " | ".join(row[i].ljust(widths[i]) for i in range(len(row))) + " |"
+        return (
+            "| " + " | ".join(row[i].ljust(widths[i]) for i in range(len(row))) + " |"
+        )
 
     print(f"\n{title}")
     print(sep)
@@ -340,7 +344,9 @@ def main() -> None:
     causal = CausalConsistencyModel(in_dim=max_t, out_dim=max_t)
 
     opt_base = torch.optim.Adam(baseline.parameters(), lr=args.lr)
-    opt_l2 = torch.optim.Adam(l2.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+    opt_l2 = torch.optim.Adam(
+        l2.parameters(), lr=args.lr, weight_decay=args.weight_decay
+    )
     opt_causal = torch.optim.Adam(causal.parameters(), lr=args.lr)
     mse = nn.MSELoss()
 
