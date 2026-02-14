@@ -4,7 +4,12 @@ import torch
 import pytest
 from steindag.variable.linear import LinearVariable
 from steindag.sem.base import SEM
-from steindag.sem.random import RandomSEMConfig, _build_f_mean, random_sem
+from steindag.sem.random import (
+    RandomSEMConfig,
+    _build_f_mean,
+    random_sem,
+    resolve_transforms,
+)
 
 
 @pytest.fixture
@@ -280,3 +285,14 @@ class TestRandomSEM:
         data = sem.generate(768)
         for values in data.values():
             assert torch.isfinite(values).all()
+
+    def test_resolve_transforms_supports_smooth_and_sharp_families(self) -> None:
+        """Ensure broader transform pool includes smooth and sharp relations."""
+        smooth_names = ["sigmoid", "softsign", "atan", "swish", "gelu"]
+        sharp_names = ["relu", "leaky_relu", "elu", "softplus_sharp", "abs"]
+
+        x = torch.linspace(-3.0, 3.0, steps=17)
+        for fn in resolve_transforms([*smooth_names, *sharp_names, "cubic"]):
+            y = fn(x)
+            assert y.shape == x.shape
+            assert torch.isfinite(y).all()

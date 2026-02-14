@@ -9,7 +9,7 @@ from steindag.variable.linear import LinearVariable
 from steindag.variable.functional import FunctionalVariable
 from steindag.approx_posterior.laplace import LaplacePosterior, LaplacePosteriorState
 from steindag.sem.base import SEM
-from steindag.sem.random import RandomSEMConfig, random_sem
+from steindag.sem.random import RandomSEMConfig, random_sem, resolve_transforms
 
 
 @pytest.fixture
@@ -635,6 +635,80 @@ class TestLaplacePosteriorNonlinearRobustness:
             samples = sem.posterior.sample(128)
             for sample in samples.values():
                 self._assert_finite_and_bounded(sample)
+
+    def test_laplace_stable_with_all_supported_transforms(self) -> None:
+        """Ensure Laplace fitting remains stable when every transform is exercised."""
+        transform_names = [
+            "sin",
+            "cos",
+            "exp",
+            "tanh",
+            "sigmoid",
+            "softsign",
+            "atan",
+            "swish",
+            "gelu",
+            "relu",
+            "leaky_relu",
+            "elu",
+            "softplus_sharp",
+            "abs",
+            "cubic",
+        ]
+        transforms = resolve_transforms(transform_names)
+
+        def all_transforms_chain(z: Tensor) -> Tensor:
+            value = 0.35 * z
+            for transform in transforms:
+                value = transform(value)
+                # Keep numerical range controlled while still preserving
+                # participation of each transform in the computational graph.
+                value = 0.5 * value
+            return value
+
+        sem = SEM(
+            variables=[
+                FunctionalVariable(
+                    name="Z",
+                    sigma=0.8,
+                    f_mean=lambda _: torch.tensor(0.0),
+                    parent_names=[],
+                ),
+                FunctionalVariable(
+                    name="X",
+                    sigma=0.7,
+                    f_mean=lambda p: all_transforms_chain(p["Z"]),
+                    parent_names=["Z"],
+                ),
+                FunctionalVariable(
+                    name="Y",
+                    sigma=0.8,
+                    f_mean=lambda p: 0.4 * p["X"] + 0.2 * torch.tanh(p["Z"]),
+                    parent_names=["X", "Z"],
+                ),
+            ]
+        )
+
+        sem.posterior._num_map_restarts = 3
+        sem.posterior._num_mixture_components = 2
+        sem.posterior._continuation_scales = (3.0, 1.5, 1.0)
+        sem.posterior._continuation_steps = 18
+
+        torch.manual_seed(321)
+        values = sem.generate(32)
+        observed = {"X": values["X"], "Y": values["Y"]}
+
+        sem.posterior.fit(observed)
+        state = sem.posterior.state
+        assert state is not None
+        self._assert_finite_and_bounded(state.MAP_components_rav)
+        self._assert_finite_and_bounded(state.L_cov_components_rav)
+        self._assert_finite_and_bounded(state.component_log_weights, bound=100.0)
+
+        torch.manual_seed(322)
+        samples = sem.posterior.sample(64)
+        assert "Z" in samples
+        self._assert_finite_and_bounded(samples["Z"])
 
 
 class TestLaplacePosteriorJacobianStandardization:
