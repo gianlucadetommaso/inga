@@ -8,6 +8,7 @@ from typing import Callable, Iterable
 import random
 import torch
 from torch import Tensor
+from torch.nn import functional as F
 
 from steindag.sem.base import SEM
 from steindag.variable.base import Variable
@@ -44,6 +45,17 @@ _TRANSFORM_MAP: dict[str, Callable[[Tensor], Tensor]] = {
     "cos": torch.cos,
     "exp": torch.exp,
     "tanh": torch.tanh,
+    "sigmoid": torch.sigmoid,
+    "softsign": F.softsign,
+    "atan": torch.atan,
+    "swish": lambda x: x * torch.sigmoid(x),
+    "gelu": F.gelu,
+    "relu": torch.relu,
+    "leaky_relu": lambda x: F.leaky_relu(x, negative_slope=0.1),
+    "elu": F.elu,
+    "softplus_sharp": lambda x: F.softplus(x, beta=8.0),
+    "abs": torch.abs,
+    "cubic": lambda x: x + 0.25 * x**3,
 }
 
 
