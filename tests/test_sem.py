@@ -1,7 +1,9 @@
 """Tests for the SEM class."""
 
+import matplotlib
 import torch
 import pytest
+from steindag.variable.base import Variable
 from steindag.variable.linear import LinearVariable
 from steindag.sem.base import SEM
 from steindag.sem.random import (
@@ -10,6 +12,8 @@ from steindag.sem.random import (
     random_sem,
     resolve_transforms,
 )
+
+matplotlib.use("Agg")
 
 
 @pytest.fixture
@@ -106,6 +110,17 @@ class TestSEMInit:
         assert sem.posterior._num_mixture_components == 2
         assert sem.posterior._adam_lr == 1e-2
 
+    def test_init_accepts_parent_only_variables_without_sigma(self) -> None:
+        """SEM should accept DAG-only variable declarations."""
+        sem = SEM(
+            variables=[
+                Variable(name="Z"),
+                Variable(name="X", parent_names=["Z"]),
+            ]
+        )
+
+        assert set(sem._variables.keys()) == {"Z", "X"}
+
 
 class TestSEMGenerate:
     """Tests for SEM.generate method."""
@@ -196,6 +211,438 @@ class TestSEMPosterior:
 
         with pytest.raises(ValueError, match="fit"):
             sem.posterior.sample(10)
+
+
+class TestSEMDraw:
+    """Tests for SEM.draw visualization."""
+
+    def test_draw_creates_png_file(self, tmp_path) -> None:
+        """Draw API should render and save a PNG file."""
+        sem = SEM(
+            variables=[
+                Variable(name="V1"),
+                Variable(name="X", parent_names=["V1"]),
+                Variable(name="Y", parent_names=["X"]),
+            ]
+        )
+
+        out = sem.draw(
+            output_path=tmp_path / "dag.png",
+            observed_names=["X"],
+            title="DAG",
+        )
+
+        assert out.exists()
+        assert out.suffix == ".png"
+        assert out.stat().st_size > 0
+
+    def test_draw_rejects_unknown_observed_variable(self) -> None:
+        """Unknown observed names should raise ValueError in draw."""
+        sem = SEM(
+            variables=[
+                Variable(name="V1"),
+                Variable(name="X", parent_names=["V1"]),
+            ]
+        )
+
+        with pytest.raises(ValueError, match="Unknown observed variable"):
+            sem.draw(output_path="plots/test_draw.png", observed_names=["NOPE"])
+
+
+class TestSEMPlotDAG:
+    """Tests for SEM.plot_dag visualization."""
+
+    def test_plot_dag_labels_and_shading(self, chain_sem: SEM) -> None:
+        """Node labels should be present and observed nodes should be shaded."""
+        _, ax = chain_sem.plot_dag(observed_names=["X"])
+
+        labels = {text.get_text() for text in ax.texts}
+        assert labels == {"Z", "X", "Y"}
+
+        node_patches = [
+            patch
+            for patch in ax.patches
+            if getattr(patch, "get_gid", lambda: None)() is not None
+            and str(patch.get_gid()).startswith("node:")
+        ]
+        assert len(node_patches) == 3
+
+        patch_by_name = {
+            str(patch.get_gid()).split(":", 1)[1]: patch for patch in node_patches
+        }
+
+        observed_facecolor = patch_by_name["X"].get_facecolor()[:3]
+        unobserved_facecolor = patch_by_name["Z"].get_facecolor()[:3]
+
+        assert observed_facecolor == pytest.approx((0.741, 0.741, 0.741), abs=0.02)
+        assert unobserved_facecolor == pytest.approx((1.0, 1.0, 1.0), abs=0.01)
+
+    def test_plot_dag_rejects_unknown_observed_variable(self, simple_sem: SEM) -> None:
+        """Unknown observed names should raise a ValueError."""
+        with pytest.raises(ValueError, match="Unknown observed variable"):
+            simple_sem.plot_dag(observed_names=["NOT_IN_SEM"])
+
+    def test_plot_dag_highlights_path_categories(self) -> None:
+        """Path categories should be color-coded for treatment/outcome queries."""
+        sem = SEM(
+            variables=[
+                LinearVariable(
+                    "U", sigma=1.0, parent_names=[], coefs={}, intercept=0.0
+                ),
+                LinearVariable(
+                    "T", sigma=1.0, parent_names=["U"], coefs={"U": 1.0}, intercept=0.0
+                ),
+                LinearVariable(
+                    "M", sigma=1.0, parent_names=["T"], coefs={"T": 1.0}, intercept=0.0
+                ),
+                LinearVariable(
+                    "B", sigma=1.0, parent_names=["T"], coefs={"T": 1.0}, intercept=0.0
+                ),
+                LinearVariable(
+                    "Y",
+                    sigma=1.0,
+                    parent_names=["M", "B", "U"],
+                    coefs={"M": 1.0, "B": 1.0, "U": 1.0},
+                    intercept=0.0,
+                ),
+            ]
+        )
+
+        _, ax = sem.plot_dag(
+            observed_names=["T", "B"],
+            treatment_name="T",
+            outcome_name="Y",
+        )
+
+        edge_patches = [
+            patch
+            for patch in ax.patches
+            if getattr(patch, "get_gid", lambda: None)() is not None
+            and str(patch.get_gid()).startswith("edge:")
+        ]
+        edge_categories_by_name: dict[str, set[str]] = {}
+        for patch in edge_patches:
+            gid = str(patch.get_gid())
+            _, edge_name, category = gid.split(":", 2)
+            edge_categories_by_name.setdefault(edge_name, set()).add(category)
+
+        assert "open_causal" in edge_categories_by_name["T->M"]
+        assert "open_causal" in edge_categories_by_name["M->Y"]
+        assert "open_noncausal" in edge_categories_by_name["U->T"]
+        assert "open_noncausal" in edge_categories_by_name["U->Y"]
+        assert "blocked_causal" in edge_categories_by_name["T->B"]
+        assert "blocked_causal" in edge_categories_by_name["B->Y"]
+
+        node_patches = [
+            patch
+            for patch in ax.patches
+            if getattr(patch, "get_gid", lambda: None)() is not None
+            and str(patch.get_gid()).startswith("node:")
+        ]
+        node_facecolor_by_name = {
+            str(p.get_gid()).split(":", 1)[1]: p.get_facecolor()[:3]
+            for p in node_patches
+        }
+        assert node_facecolor_by_name["T"] == pytest.approx((0.18, 0.36, 1.0), abs=0.08)
+        assert node_facecolor_by_name["Y"] == pytest.approx(
+            (0.56, 0.27, 0.68), abs=0.08
+        )
+
+    def test_plot_dag_supports_multiple_edge_categories(self) -> None:
+        """An edge can carry multiple path categories and should be duplicated."""
+        sem = SEM(
+            variables=[
+                LinearVariable(
+                    "U", sigma=1.0, parent_names=[], coefs={}, intercept=0.0
+                ),
+                LinearVariable(
+                    "T", sigma=1.0, parent_names=["U"], coefs={"U": 1.0}, intercept=0.0
+                ),
+                LinearVariable(
+                    "M",
+                    sigma=1.0,
+                    parent_names=["T", "U"],
+                    coefs={"T": 1.0, "U": 1.0},
+                    intercept=0.0,
+                ),
+                LinearVariable(
+                    "Y",
+                    sigma=1.0,
+                    parent_names=["M", "U"],
+                    coefs={"M": 1.0, "U": 1.0},
+                    intercept=0.0,
+                ),
+            ]
+        )
+
+        _, ax = sem.plot_dag(
+            observed_names=["T", "M"],
+            treatment_name="T",
+            outcome_name="Y",
+        )
+
+        edge_patches = [
+            patch
+            for patch in ax.patches
+            if getattr(patch, "get_gid", lambda: None)() is not None
+            and str(patch.get_gid()).startswith("edge:")
+        ]
+        categories_t_to_m = {
+            str(p.get_gid()).split(":", 2)[2]
+            for p in edge_patches
+            if str(p.get_gid()).split(":", 2)[1] == "T->M"
+        }
+        assert categories_t_to_m == {"blocked_causal", "open_noncausal"}
+
+    def test_plot_dag_requires_treatment_observed(self, simple_sem: SEM) -> None:
+        """Treatment must be included in observed_names when provided."""
+        with pytest.raises(ValueError, match="treatment_name"):
+            simple_sem.plot_dag(
+                observed_names=[],
+                treatment_name="X",
+                outcome_name="Z",
+            )
+
+    def test_plot_dag_requires_outcome_unobserved(self, simple_sem: SEM) -> None:
+        """Outcome cannot be included in observed_names when provided."""
+        with pytest.raises(ValueError, match="outcome_name"):
+            simple_sem.plot_dag(
+                observed_names=["X", "Z"],
+                treatment_name="X",
+                outcome_name="Z",
+            )
+
+    def test_path_flows_do_not_add_non_simple_collider_descendant_walks(self) -> None:
+        """Collider-descendant motifs should not create non-simple repeated-node paths."""
+        sem = SEM(
+            variables=[
+                LinearVariable(
+                    "T", sigma=1.0, parent_names=[], coefs={}, intercept=0.0
+                ),
+                LinearVariable(
+                    "Y",
+                    sigma=1.0,
+                    parent_names=["T", "P"],
+                    coefs={"T": 1.0, "P": 1.0},
+                    intercept=0.0,
+                ),
+                LinearVariable(
+                    "P", sigma=1.0, parent_names=[], coefs={}, intercept=0.0
+                ),
+                LinearVariable(
+                    "D",
+                    sigma=1.0,
+                    parent_names=["Y", "P"],
+                    coefs={"Y": 1.0, "P": 1.0},
+                    intercept=0.0,
+                ),
+            ]
+        )
+
+        flows = sem.path_flows(
+            treatment_name="T",
+            outcome_name="Y",
+            observed_names=["T", "D"],
+        )
+
+        assert ["T", "Y", "D", "P", "Y"] not in flows["open_noncausal"]
+
+    def test_path_flows_exclude_repeated_node_detours(self) -> None:
+        """Synthetic detours must remain simple paths (no repeated nodes)."""
+        from steindag.sem.random import RandomSEMConfig, random_sem
+
+        sem = random_sem(
+            RandomSEMConfig(
+                num_variables=6,
+                parent_prob=0.6,
+                nonlinear_prob=0.6,
+                seed=11,
+            )
+        )
+        flows = sem.path_flows(
+            treatment_name="X1",
+            outcome_name="X4",
+            observed_names=["X1", "X3", "X5"],
+        )
+
+        assert ["X1", "X4", "X5", "X3", "X4"] not in flows["open_noncausal"]
+        assert ["X1", "X2", "X4", "X5", "X3", "X4"] not in flows["open_noncausal"]
+
+    def test_animate_flow_gif_creates_file(self, tmp_path) -> None:
+        """Core GIF animation API should render successfully."""
+        sem = SEM(
+            variables=[
+                LinearVariable(
+                    "X0", sigma=1.0, parent_names=[], coefs={}, intercept=0.0
+                ),
+                LinearVariable(
+                    "X1",
+                    sigma=1.0,
+                    parent_names=["X0"],
+                    coefs={"X0": 1.0},
+                    intercept=0.0,
+                ),
+                LinearVariable(
+                    "X2",
+                    sigma=1.0,
+                    parent_names=["X1"],
+                    coefs={"X1": 1.0},
+                    intercept=0.0,
+                ),
+            ]
+        )
+
+        out = sem.animate_flow_gif(
+            output_path=tmp_path / "flow.gif",
+            observed_names=["X1"],
+            treatment_name="X1",
+            outcome_name="X2",
+            fps=8,
+            frames_per_flow=8,
+            title="Flow",
+        )
+
+        assert out.exists()
+        assert out.stat().st_size > 0
+
+    def test_flow_animation_stages_include_directed_causal_first(self) -> None:
+        """Staged animation should begin with directed causal flow stage."""
+        sem = SEM(
+            variables=[
+                LinearVariable(
+                    "X0", sigma=1.0, parent_names=[], coefs={}, intercept=0.0
+                ),
+                LinearVariable(
+                    "X1",
+                    sigma=1.0,
+                    parent_names=["X0"],
+                    coefs={"X0": 1.0},
+                    intercept=0.0,
+                ),
+                LinearVariable(
+                    "X2",
+                    sigma=1.0,
+                    parent_names=["X1"],
+                    coefs={"X1": 1.0},
+                    intercept=0.0,
+                ),
+            ]
+        )
+
+        stages = sem.flow_animation_stages(
+            treatment_name="X1",
+            outcome_name="X2",
+            observed_names=["X1"],
+        )
+        assert len(stages) >= 1
+        assert stages[0]["name"] == "directed_causal"
+        assert stages[0]["color"] == "#2ECC71"
+
+    def test_flow_animation_stages_include_confounder_bias(self) -> None:
+        """Latent confounders should produce red confounder-bias stages."""
+        sem = SEM(
+            variables=[
+                LinearVariable(
+                    "U", sigma=1.0, parent_names=[], coefs={}, intercept=0.0
+                ),
+                LinearVariable(
+                    "T", sigma=1.0, parent_names=["U"], coefs={"U": 1.0}, intercept=0.0
+                ),
+                LinearVariable(
+                    "Y",
+                    sigma=1.0,
+                    parent_names=["T", "U"],
+                    coefs={"T": 1.0, "U": 1.0},
+                    intercept=0.0,
+                ),
+            ]
+        )
+
+        stages = sem.flow_animation_stages(
+            treatment_name="T",
+            outcome_name="Y",
+            observed_names=["T"],
+        )
+
+        conf_stages = [
+            stage for stage in stages if str(stage["name"]).startswith("confounder:")
+        ]
+        assert len(conf_stages) == 1
+        assert conf_stages[0]["color"] == "#FF4D4F"
+        assert conf_stages[0]["pulse_nodes"] == ["U"]
+
+    def test_flow_animation_stages_classifies_observed_mediator_not_selection(
+        self,
+    ) -> None:
+        """Observed mediators should be labeled as mediator bias, not selection bias."""
+        sem = SEM(
+            variables=[
+                LinearVariable(
+                    "V1", sigma=1.0, parent_names=[], coefs={}, intercept=0.0
+                ),
+                LinearVariable(
+                    "X",
+                    sigma=1.0,
+                    parent_names=["V1"],
+                    coefs={"V1": 1.0},
+                    intercept=0.0,
+                ),
+                LinearVariable(
+                    "V2",
+                    sigma=1.0,
+                    parent_names=["V1", "X"],
+                    coefs={"V1": 1.0, "X": 1.0},
+                    intercept=0.0,
+                ),
+                LinearVariable(
+                    "V3",
+                    sigma=1.0,
+                    parent_names=["V1", "X", "V2"],
+                    coefs={"V1": 1.0, "X": 1.0, "V2": 1.0},
+                    intercept=0.0,
+                ),
+                LinearVariable(
+                    "Y",
+                    sigma=1.0,
+                    parent_names=["V1", "X", "V2", "V3"],
+                    coefs={"V1": 1.0, "X": 1.0, "V2": 1.0, "V3": 1.0},
+                    intercept=0.0,
+                ),
+                LinearVariable(
+                    "V4",
+                    sigma=1.0,
+                    parent_names=["V1", "X", "V2", "V3", "Y"],
+                    coefs={"V1": 1.0, "X": 1.0, "V2": 1.0, "V3": 1.0, "Y": 1.0},
+                    intercept=0.0,
+                ),
+            ]
+        )
+
+        stages = sem.flow_animation_stages(
+            treatment_name="X",
+            outcome_name="Y",
+            observed_names=["X", "V2", "V4"],
+        )
+
+        directed_stage = next(
+            stage for stage in stages if stage["name"] == "directed_causal"
+        )
+        directed_paths = {tuple(path) for path in directed_stage["paths"]}
+        assert ("X", "Y") in directed_paths
+        assert ("X", "V2", "V3", "Y") in directed_paths
+        assert len(directed_paths) > 1
+
+        mediator_stages = [
+            stage for stage in stages if str(stage["name"]).startswith("mediator:")
+        ]
+        assert len(mediator_stages) == 1
+        assert mediator_stages[0]["name"] == "mediator:V2"
+        assert mediator_stages[0]["pulse_nodes"] == ["V2"]
+
+        selection_stage = next(
+            stage for stage in stages if stage["name"] == "selection_bias"
+        )
+        assert selection_stage["pulse_nodes"] == ["V4"]
 
 
 class TestRandomSEM:

@@ -1,14 +1,14 @@
 """Base classes for structural equation model variables."""
 
 from torch import Tensor
-from abc import abstractmethod
 from typing import Iterable
 
 
 class Variable:
     """A variable in a structural equation model.
 
-    A variable is defined by its name, parent variables, and noise standard deviation.
+    A variable is defined by its name, parent variables, and optional noise
+    standard deviation.
     The variable value is computed as f_mean(parents) + sigma * u, where u is a noise term.
 
     Attributes:
@@ -18,13 +18,17 @@ class Variable:
     """
 
     def __init__(
-        self, name: str, sigma: float, parent_names: Iterable[str] | None = None
+        self,
+        name: str,
+        sigma: float | None = None,
+        parent_names: Iterable[str] | None = None,
     ) -> None:
         """Initialize a variable.
 
         Args:
             name: The variable's identifier.
-            sigma: Standard deviation of the additive noise term.
+            sigma: Standard deviation of the additive noise term. Optional when
+                only defining DAG structure.
             parent_names: Names of parent variables in the DAG. Defaults to empty list.
         """
         self.name = name
@@ -41,14 +45,13 @@ class Variable:
             u: Noise tensor.
             f_mean: Optional precomputed mean function value. If None, it will be computed.
 
-        Returns:
-            The variable value: f_mean(parents) + sigma * u.
+        Raises:
+            NotImplementedError: Base class does not implement equations.
         """
-        if f_mean is None:
-            f_mean = self.f_mean(parents)
-        return f_mean + self.sigma * u
+        raise NotImplementedError(
+            f"Variable '{self.name}' has no structural equation configured."
+        )
 
-    @abstractmethod
     def f_mean(self, parents: dict[str, Tensor]) -> Tensor:
         """Compute the mean function (expected value given parents).
 
@@ -56,6 +59,11 @@ class Variable:
             parents: Dictionary mapping parent names to their tensor values.
 
         Returns:
-            The mean function value.
+            Mean function value.
+
+        Raises:
+            NotImplementedError: If no structural function is provided.
         """
-        ...
+        raise NotImplementedError(
+            f"Variable '{self.name}' has no structural function configured."
+        )

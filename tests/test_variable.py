@@ -37,6 +37,20 @@ class TestVariable:
         assert var.parent_names == ["A", "B"]
         assert isinstance(var.parent_names, list)
 
+    def test_base_variable_f_mean_not_implemented(self) -> None:
+        """Bare Variable should not implement a mean function."""
+        var = Variable(name="X")
+
+        with pytest.raises(NotImplementedError, match="structural function"):
+            var.f_mean({})
+
+    def test_base_variable_f_not_implemented(self) -> None:
+        """Bare Variable should not implement a full structural equation."""
+        var = Variable(name="X", sigma=1.0)
+
+        with pytest.raises(NotImplementedError, match="structural equation"):
+            var.f({}, torch.randn(3))
+
 
 class TestLinearVariable:
     """Tests for LinearVariable class."""

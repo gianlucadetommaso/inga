@@ -556,7 +556,13 @@ class LaplacePosterior:
 
             if name in observed:
                 values[name] = observed[name]
-                u = (observed[name] - f_mean) / (variable.sigma * obs_sigma_scale)
+                sigma = variable.sigma
+                if sigma is None:
+                    raise ValueError(
+                        f"Variable '{name}' has no sigma configured. "
+                        "Set sigma to evaluate posterior losses."
+                    )
+                u = (observed[name] - f_mean) / (sigma * obs_sigma_scale)
 
             else:
                 values[name] = variable.f(parents, u_latent[name], f_mean)
@@ -610,8 +616,17 @@ class LaplacePosterior:
         gn_hessian_rav = torch.zeros(
             (num_samples, latent_dim, latent_dim), device=device, dtype=hessian_dtype
         )
+        latent_diag: list[float] = []
+        for name in latent_names:
+            sigma = self._variables[name].sigma
+            if sigma is None:
+                raise ValueError(
+                    f"Variable '{name}' has no sigma configured. "
+                    "Set sigma to evaluate approximate covariance."
+                )
+            latent_diag.append(1 / sigma**2)
         gn_hessian_rav[:, range(latent_dim), range(latent_dim)] = torch.tensor(
-            [1 / self._variables[name].sigma ** 2 for name in latent_names],
+            latent_diag,
             device=device,
             dtype=hessian_dtype,
         )
@@ -634,9 +649,13 @@ class LaplacePosterior:
             scale = torch.sqrt(1.0 + (g_norm / self._jacobian_norm_cap) ** 2)
             g = g / scale[:, None]
 
-            gn_hessian_rav += (
-                g[:, None] * g[:, :, None] / self._variables[observed_name].sigma ** 2
-            )
+            sigma_obs = self._variables[observed_name].sigma
+            if sigma_obs is None:
+                raise ValueError(
+                    f"Variable '{observed_name}' has no sigma configured. "
+                    "Set sigma to evaluate approximate covariance."
+                )
+            gn_hessian_rav += g[:, None] * g[:, :, None] / sigma_obs**2
 
         # Enforce exact symmetry before Cholesky to avoid numerical skew.
         gn_hessian_rav = 0.5 * (gn_hessian_rav + gn_hessian_rav.transpose(-1, -2))

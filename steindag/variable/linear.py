@@ -86,3 +86,16 @@ class LinearVariable(Variable):
             f_mean = f_mean + self._coefs[parent_name] * parent
 
         return f_mean  # type: ignore[return-value]
+
+    def f(
+        self, parents: dict[str, Tensor], u: Tensor, f_mean: Tensor | None = None
+    ) -> Tensor:
+        """Compute variable values as linear mean plus scaled noise."""
+        if self.sigma is None:
+            raise ValueError(
+                f"Variable '{self.name}' has no sigma configured. "
+                "Set sigma to evaluate structural equations."
+            )
+        if f_mean is None:
+            f_mean = self.f_mean(parents)
+        return f_mean + self.sigma * u
