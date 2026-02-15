@@ -47,3 +47,16 @@ class FunctionalVariable(Variable):
     def f_mean(self, parents: dict[str, Tensor]) -> Tensor:
         """Compute the mean function using the provided callable."""
         return self._f_mean(parents)
+
+    def f(
+        self, parents: dict[str, Tensor], u: Tensor, f_mean: Tensor | None = None
+    ) -> Tensor:
+        """Compute variable values as functional mean plus scaled noise."""
+        if self.sigma is None:
+            raise ValueError(
+                f"Variable '{self.name}' has no sigma configured. "
+                "Set sigma to evaluate structural equations."
+            )
+        if f_mean is None:
+            f_mean = self.f_mean(parents)
+        return f_mean + self.sigma * u

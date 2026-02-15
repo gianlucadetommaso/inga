@@ -146,6 +146,11 @@ class CausalBiasMixin(CausalEffectMixin):
                     )
 
                     sigma = self._variables[observed_name].sigma
+                    if sigma is None:
+                        raise ValueError(
+                            f"Variable '{observed_name}' has no sigma configured. "
+                            "Set sigma to evaluate causal bias."
+                        )
                     return -(du_fy + mid_term) * dx_diff / sigma
 
                 return bias_contrib_per_observation(
@@ -235,7 +240,13 @@ class CausalBiasMixin(CausalEffectMixin):
 
             if name in observed:
                 if name == observed_name:
-                    return (observed[name] - f_mean) / variable.sigma
+                    sigma = variable.sigma
+                    if sigma is None:
+                        raise ValueError(
+                            f"Variable '{name}' has no sigma configured. "
+                            "Set sigma to evaluate causal bias."
+                        )
+                    return (observed[name] - f_mean) / sigma
                 values[name] = observed[name]
             else:
                 values[name] = variable.f(parents, latent[name], f_mean)
@@ -297,7 +308,13 @@ class CausalBiasMixin(CausalEffectMixin):
             if name in observed:
                 f_mean = variable.f_mean(parents)
                 if name == observed_name:
-                    u_observed = (observed[name] - f_mean) / variable.sigma
+                    sigma = variable.sigma
+                    if sigma is None:
+                        raise ValueError(
+                            f"Variable '{name}' has no sigma configured. "
+                            "Set sigma to evaluate causal bias."
+                        )
+                    u_observed = (observed[name] - f_mean) / sigma
                 values[name] = observed[name]
             else:
                 values[name] = variable.f(parents, latent[name])
@@ -338,7 +355,13 @@ class CausalBiasMixin(CausalEffectMixin):
                 values[name] = variable.f(parents, latent[name])
             else:
                 f_mean = variable.f_mean(parents)
-                residual = ((observed[name] - f_mean) / variable.sigma).detach()
+                sigma = variable.sigma
+                if sigma is None:
+                    raise ValueError(
+                        f"Variable '{name}' has no sigma configured. "
+                        "Set sigma to evaluate causal bias."
+                    )
+                residual = ((observed[name] - f_mean) / sigma).detach()
                 values[name] = variable.f(parents, residual, f_mean=f_mean)
 
         raise ValueError(f"Outcome variable '{outcome_name}' not found in the SEM.")

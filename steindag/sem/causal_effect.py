@@ -244,7 +244,13 @@ class CausalEffectMixin:
                 # and use it to reconstruct the counterfactual mediator under intervention.
                 # The noise is detached so the gradient flows only through f_mean.
                 f_mean = variable.f_mean(parents)
-                noise = ((mediator_observed[name] - f_mean) / variable.sigma).detach()
+                sigma = variable.sigma
+                if sigma is None:
+                    raise ValueError(
+                        f"Variable '{name}' has no sigma configured. "
+                        "Set sigma to evaluate causal effects."
+                    )
+                noise = ((mediator_observed[name] - f_mean) / sigma).detach()
                 values[name] = variable.f(parents, noise, f_mean=f_mean)
             else:
                 values[name] = variable.f(parents, latent[name])

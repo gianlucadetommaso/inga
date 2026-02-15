@@ -1,36 +1,24 @@
 """Structural Equation Model implementation."""
 
-from torch import Tensor
-import torch
+from __future__ import annotations
 
-from steindag.variable.base import Variable
+import torch
+from torch import Tensor
+
 from steindag.approx_posterior.laplace import LaplacePosterior
 from steindag.sem.causal_bias import CausalBiasMixin
+from steindag.sem.plotting import PlottingMixin
+from steindag.variable.base import Variable
 
 
-class SEM(CausalBiasMixin):
-    """A Structural Equation Model (SEM).
-
-    A SEM defines a collection of variables with causal relationships.
-    It supports forward sampling, MAP estimation, and approximate posterior inference.
-
-    Attributes:
-        _variables: Dictionary mapping variable names to Variable objects.
-        posterior: Laplace approximate posterior for inference.
-    """
+class SEM(PlottingMixin, CausalBiasMixin):
+    """A Structural Equation Model (SEM)."""
 
     def __init__(
         self,
         variables: list[Variable],
         posterior_kwargs: dict | None = None,
     ) -> None:
-        """Initialize the SEM.
-
-        Args:
-            variables: List of variables in topological order (parents before children).
-            posterior_kwargs: Optional keyword arguments forwarded to
-                :class:`LaplacePosterior` for configuring MAP/optimizer settings.
-        """
         self._variables = {variable.name: variable for variable in variables}
         self.posterior = LaplacePosterior(
             variables=self._variables,
@@ -38,16 +26,8 @@ class SEM(CausalBiasMixin):
         )
 
     def generate(self, num_samples: int) -> dict[str, Tensor]:
-        """Generate samples from the SEM by forward sampling.
-
-        Args:
-            num_samples: Number of samples to generate.
-
-        Returns:
-            Dictionary mapping variable names to their sampled tensor values.
-        """
+        """Generate samples from the SEM by forward sampling."""
         values: dict[str, Tensor] = {}
-
         for name, variable in self._variables.items():
             parents = {
                 pa_name: parent
@@ -55,5 +35,4 @@ class SEM(CausalBiasMixin):
                 if pa_name in variable.parent_names
             }
             values[name] = variable.f(parents, torch.randn(num_samples))
-
         return values
