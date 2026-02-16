@@ -2,6 +2,7 @@
 
 from steindag.sem.base import SEM
 from steindag.sem.causal_effect import CausalEffectMixin
+from steindag.sem.html import HTMLMixin
 from steindag.sem.random import RandomSEMConfig, random_sem
 from steindag.sem.dataset import (
     CausalQueryConfig,
@@ -14,6 +15,7 @@ from steindag.sem.dataset import (
 __all__ = [
     "SEM",
     "CausalEffectMixin",
+    "HTMLMixin",
     "RandomSEMConfig",
     "random_sem",
     "CausalQueryConfig",

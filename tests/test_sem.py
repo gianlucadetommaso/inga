@@ -213,6 +213,137 @@ class TestSEMPosterior:
             sem.posterior.sample(10)
 
 
+class TestSEMPosteriorPredictiveHTML:
+    """Tests for posterior predictive sampling and HTML export."""
+
+    def test_posterior_predictive_samples_returns_all_variables(
+        self, chain_sem: SEM
+    ) -> None:
+        """Posterior predictive should contain observed and latent variables."""
+        torch.manual_seed(0)
+        observed = {"X": torch.tensor([0.3, -0.8], dtype=torch.float32)}
+
+        samples = chain_sem.posterior_predictive_samples(observed, num_samples=64)
+
+        assert set(samples.keys()) == {"Z", "X", "Y"}
+        assert samples["Z"].shape == (2, 64)
+        assert samples["X"].shape == (2, 64)
+        assert samples["Y"].shape == (2, 64)
+        assert torch.allclose(
+            samples["X"],
+            observed["X"].unsqueeze(1).expand(2, 64),
+        )
+
+    def test_export_html_creates_html(self, tmp_path) -> None:
+        """HTML export should write a valid self-contained HTML file."""
+        sem = SEM(
+            variables=[
+                LinearVariable(
+                    name="Z", parent_names=[], sigma=1.0, coefs={}, intercept=0.0
+                ),
+                LinearVariable(
+                    name="X",
+                    parent_names=["Z"],
+                    sigma=1.0,
+                    coefs={"Z": 1.0},
+                    intercept=0.0,
+                ),
+            ]
+        )
+
+        out = sem.export_html(
+            output_path=tmp_path / "posterior_explorer.html",
+            observed_ranges={"X": (-1.0, 1.0, 3)},
+            baseline_observed={"X": 0.0},
+            num_posterior_samples=40,
+            max_precomputed_states=32,
+        )
+
+        assert out.exists()
+        html = out.read_text(encoding="utf-8")
+        assert "Plotly.react" in html
+        assert "SteinDAG Explorer" in html
+        assert "slider_names" in html
+        assert (
+            "const nbins = Math.max(15, Math.round(Math.sqrt(samples.length || 1)));"
+            in html
+        )
+        assert '<h1 id="title">' not in html
+        assert 'class="subtitle"' not in html
+
+    def test_export_html_rejects_oversized_grid(self) -> None:
+        """Cross-product precomputation cap should be enforced."""
+        sem = SEM(
+            variables=[
+                LinearVariable(
+                    name="Z", parent_names=[], sigma=1.0, coefs={}, intercept=0.0
+                ),
+                LinearVariable(
+                    name="X",
+                    parent_names=["Z"],
+                    sigma=1.0,
+                    coefs={"Z": 1.0},
+                    intercept=0.0,
+                ),
+                LinearVariable(
+                    name="Y",
+                    parent_names=["X", "Z"],
+                    sigma=1.0,
+                    coefs={"X": 1.0, "Z": 1.0},
+                    intercept=0.0,
+                ),
+            ]
+        )
+
+        with pytest.raises(ValueError, match="Cross-product grid too large"):
+            sem.export_html(
+                output_path="plots/posterior_explorer_too_large.html",
+                observed_ranges={
+                    "X": (-1.0, 1.0, 7),
+                    "Y": (-1.0, 1.0, 7),
+                },
+                max_precomputed_states=40,
+                num_posterior_samples=10,
+            )
+
+    def test_export_html_includes_causal_effect_distributions(self, tmp_path) -> None:
+        """Explorer should include causal-effect plots for all observed treatments."""
+        sem = SEM(
+            variables=[
+                LinearVariable(
+                    name="Z", parent_names=[], sigma=1.0, coefs={}, intercept=0.0
+                ),
+                LinearVariable(
+                    name="X",
+                    parent_names=["Z"],
+                    sigma=1.0,
+                    coefs={"Z": 1.0},
+                    intercept=0.0,
+                ),
+                LinearVariable(
+                    name="Y",
+                    parent_names=["X", "Z"],
+                    sigma=1.0,
+                    coefs={"X": 2.0, "Z": 1.0},
+                    intercept=0.0,
+                ),
+            ]
+        )
+
+        out = sem.export_html(
+            output_path=tmp_path / "posterior_explorer_causal.html",
+            observed_ranges={"X": (-1.0, 1.0, 3), "Z": (-1.0, 1.0, 3)},
+            baseline_observed={"X": 0.0, "Z": 0.0},
+            outcome_name="Y",
+            num_posterior_samples=40,
+            max_precomputed_states=16,
+        )
+
+        html = out.read_text(encoding="utf-8")
+        assert "causal_effect(X->Y)" in html
+        assert "causal_effect(Z->Y)" in html
+
+
 class TestSEMDraw:
     """Tests for SEM.draw visualization."""
 
