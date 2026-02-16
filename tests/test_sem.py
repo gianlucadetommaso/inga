@@ -264,7 +264,10 @@ class TestSEMPosteriorPredictiveHTML:
         assert "Plotly.react" in html
         assert "SteinDAG Explorer" in html
         assert "slider_names" in html
-        assert "const nbins = Math.max(15, Math.round(Math.sqrt(samples.length || 1)));" in html
+        assert (
+            "const nbins = Math.max(15, Math.round(Math.sqrt(samples.length || 1)));"
+            in html
+        )
         assert '<h1 id="title">' not in html
         assert 'class="subtitle"' not in html
 

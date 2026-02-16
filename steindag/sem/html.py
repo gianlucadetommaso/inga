@@ -2,19 +2,32 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from itertools import product
 import json
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 import torch
-from torch import Tensor
 
 from steindag.variable.functional import FunctionalVariable
 from steindag.variable.linear import LinearVariable
 
+if TYPE_CHECKING:
+    from steindag.variable.base import Variable
+
 
 class HTMLMixin:
     """Mixin with HTML rendering/export functionality for SEM artifacts."""
+
+    _variables: dict[str, Variable]
+    _validate_causal_query: Any
+    draw: Any
+    animate: Any
+    posterior_predictive_samples: Any
+    _compute_causal_effect_samples: Any
+    _compute_causal_bias_samples: Any
+    _compute_plot_positions: Any
 
     def export_html(
         self,
@@ -108,7 +121,8 @@ class HTMLMixin:
                 )
 
             candidate_observed = {
-                name: torch.tensor([0.0], dtype=torch.float32) for name in observed_names
+                name: torch.tensor([0.0], dtype=torch.float32)
+                for name in observed_names
             }
             for treatment_name in sorted(observed_names):
                 self._validate_causal_query(
@@ -120,7 +134,9 @@ class HTMLMixin:
                 causal_effect_names.append(
                     f"causal_effect({treatment_name}->{outcome_name})"
                 )
-                causal_bias_names.append(f"causal_bias({treatment_name}->{outcome_name})")
+                causal_bias_names.append(
+                    f"causal_bias({treatment_name}->{outcome_name})"
+                )
 
         asset_dir = output.parent / f"{output.stem}_assets"
         asset_dir.mkdir(parents=True, exist_ok=True)
@@ -200,10 +216,12 @@ class HTMLMixin:
                     effect_name = f"causal_effect({treatment_name}->{outcome_name})"
                     bias_name = f"causal_bias({treatment_name}->{outcome_name})"
                     effect_values = [
-                        float(v) for v in effect_samples.squeeze(0).detach().cpu().tolist()
+                        float(v)
+                        for v in effect_samples.squeeze(0).detach().cpu().tolist()
                     ]
                     bias_values = [
-                        float(v) for v in bias_samples.squeeze(0).detach().cpu().tolist()
+                        float(v)
+                        for v in bias_samples.squeeze(0).detach().cpu().tolist()
                     ]
                     by_variable[effect_name] = effect_values
                     by_variable[bias_name] = bias_values
@@ -216,8 +234,12 @@ class HTMLMixin:
                             x_ranges[effect_name][1], max(effect_values)
                         )
                     if bias_values:
-                        x_ranges[bias_name][0] = min(x_ranges[bias_name][0], min(bias_values))
-                        x_ranges[bias_name][1] = max(x_ranges[bias_name][1], max(bias_values))
+                        x_ranges[bias_name][0] = min(
+                            x_ranges[bias_name][0], min(bias_values)
+                        )
+                        x_ranges[bias_name][1] = max(
+                            x_ranges[bias_name][1], max(bias_values)
+                        )
 
             states.append(
                 {
@@ -313,18 +335,20 @@ class HTMLMixin:
                     else rf"f_{{{name}}}"
                 )
 
-                coefs = getattr(variable, "_coefs", None)
-                if coefs:
-                    for parent_name, value in coefs.items():
+                functional_coefs: dict[str, float] | None = getattr(variable, "_coefs", None)
+                if functional_coefs:
+                    for parent_name, value in functional_coefs.items():
                         theta_symbol = rf"\theta_{{{name},{parent_name}}}"
                         parameters.append(
                             {"symbol": theta_symbol, "value": float(value)}
                         )
 
-                intercept = getattr(variable, "_intercept", None)
-                if intercept is not None:
+                functional_intercept: float | None = getattr(variable, "_intercept", None)
+                if functional_intercept is not None:
                     gamma_symbol = rf"\gamma_{{{name}}}"
-                    parameters.append({"symbol": gamma_symbol, "value": float(intercept)})
+                    parameters.append(
+                        {"symbol": gamma_symbol, "value": float(functional_intercept)}
+                    )
             else:
                 parent_expr = ", ".join(variable.parent_names)
                 rhs_main = (
@@ -346,7 +370,7 @@ class HTMLMixin:
         return equations
 
     @staticmethod
-    def display_html(payload: dict[str, object]) -> str:
+    def display_html(payload: Mapping[str, object]) -> str:
         """Render the full interactive HTML page for a given payload."""
         data_json = json.dumps(payload)
         return f"""<!doctype html>
