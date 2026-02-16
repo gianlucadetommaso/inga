@@ -335,7 +335,9 @@ class HTMLMixin:
                     else rf"f_{{{name}}}"
                 )
 
-                functional_coefs: dict[str, float] | None = getattr(variable, "_coefs", None)
+                functional_coefs: dict[str, float] | None = getattr(
+                    variable, "_coefs", None
+                )
                 if functional_coefs:
                     for parent_name, value in functional_coefs.items():
                         theta_symbol = rf"\theta_{{{name},{parent_name}}}"
@@ -343,7 +345,9 @@ class HTMLMixin:
                             {"symbol": theta_symbol, "value": float(value)}
                         )
 
-                functional_intercept: float | None = getattr(variable, "_intercept", None)
+                functional_intercept: float | None = getattr(
+                    variable, "_intercept", None
+                )
                 if functional_intercept is not None:
                     gamma_symbol = rf"\gamma_{{{name}}}"
                     parameters.append(
