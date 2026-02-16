@@ -10,7 +10,7 @@ from torch.func import grad
 from dataclasses import dataclass
 from functools import partial
 from typing import Mapping
-from steindag.variable.base import Variable
+from inga.variable.base import Variable
 
 
 @dataclass
@@ -37,7 +37,7 @@ class LaplacePosterior:
     """Laplace approximation to the posterior distribution.
 
     This class computes a Gaussian approximation to the posterior distribution
-    over latent noise variables in a SEM. The approximation is centered at the
+    over latent noise variables in a SCM. The approximation is centered at the
     MAP estimate with covariance given by the inverse Gauss-Newton Hessian.
 
     Attributes:
@@ -681,7 +681,7 @@ class LaplacePosterior:
             u_latent: Dictionary of latent noise variables.
 
         Returns:
-            List of latent variable names in the order they appear in the SEM.
+            List of latent variable names in the order they appear in the SCM.
         """
         return [name for name in self._variables if name in u_latent]
 
@@ -707,7 +707,7 @@ class LaplacePosterior:
             The f_mean value for the specified observed variable.
 
         Raises:
-            ValueError: If observed_name is not found in the SEM.
+            ValueError: If observed_name is not found in the SCM.
         """
         u_latent = self._unravel(u_latent_rav, latent_names)
         values: dict[str, Tensor] = {}
@@ -726,7 +726,7 @@ class LaplacePosterior:
             else:
                 values[name] = variable.f(parents, u_latent[name])
 
-        raise ValueError(f"Observed variable '{observed_name}' not found in the SEM.")
+        raise ValueError(f"Observed variable '{observed_name}' not found in the SCM.")
 
     def _ravel(self, u_latent: dict[str, Tensor]) -> Tensor:
         """Convert a dictionary of latent variables to a stacked tensor.

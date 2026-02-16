@@ -1,4 +1,4 @@
-"""Transfer benchmark: train one model across many random SEM datasets.
+"""Transfer benchmark: train one model across many random SCM datasets.
 
 This benchmark is meant to mimic large tabular model evaluation:
 - train a single model on many different datasets (different SEMs),
@@ -22,8 +22,8 @@ import torch
 from torch import Tensor, nn
 from torch.utils.data import DataLoader
 
-from steindag.sem.dataset import SEMDatasetConfig, generate_sem_dataset
-from steindag.sem.random import RandomSEMConfig
+from inga.scm.dataset import SCMDatasetConfig, generate_scm_dataset
+from inga.scm.random import RandomSCMConfig
 
 from examples.utils import (
     extract_observed_bundle,
@@ -144,9 +144,9 @@ def main() -> None:
     max_t = 0
     for i in range(args.train_datasets + args.test_datasets):
         seed_i = args.seed + i
-        ds = generate_sem_dataset(
-            SEMDatasetConfig(
-                sem_config=RandomSEMConfig(
+        ds = generate_scm_dataset(
+            SCMDatasetConfig(
+                sem_config=RandomSCMConfig(
                     num_variables=args.num_variables,
                     parent_prob=0.6,
                     nonlinear_prob=0.8,

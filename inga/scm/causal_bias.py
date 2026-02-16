@@ -1,4 +1,4 @@
-"""Causal bias computation mixin for Structural Equation Models."""
+"""Causal bias computation mixin for Structural Causal Models."""
 
 from __future__ import annotations
 
@@ -8,11 +8,11 @@ from torch.func import grad
 from functools import partial
 from typing import TYPE_CHECKING
 
-from steindag.sem.causal_effect import CausalEffectMixin
+from inga.scm.causal_effect import CausalEffectMixin
 
 if TYPE_CHECKING:
-    from steindag.variable.base import Variable
-    from steindag.approx_posterior.laplace import LaplacePosterior
+    from inga.variable.base import Variable
+    from inga.approx_posterior.laplace import LaplacePosterior
 
 
 class CausalBiasMixin(CausalEffectMixin):
@@ -223,7 +223,7 @@ class CausalBiasMixin(CausalEffectMixin):
             else:
                 values[name] = variable.f(parents, latent[name])
 
-        raise ValueError(f"Target variable '{target_name}' not found in the SEM.")
+        raise ValueError(f"Target variable '{target_name}' not found in the SCM.")
 
     def _get_u_observed(
         self,
@@ -251,7 +251,7 @@ class CausalBiasMixin(CausalEffectMixin):
             else:
                 values[name] = variable.f(parents, latent[name], f_mean)
 
-        raise ValueError(f"Observed variable '{observed_name}' not found in the SEM.")
+        raise ValueError(f"Observed variable '{observed_name}' not found in the SCM.")
 
     def _compute_conditional_outcome_mean(
         self,
@@ -282,7 +282,7 @@ class CausalBiasMixin(CausalEffectMixin):
                         values[name] = variable.f(parents, latent_per_obs[name])
 
                 raise ValueError(
-                    f"Outcome variable '{outcome_name}' not found in the SEM."
+                    f"Outcome variable '{outcome_name}' not found in the SCM."
                 )
 
             return outcome_mean_per_observation(latent_sample, observed)
@@ -326,7 +326,7 @@ class CausalBiasMixin(CausalEffectMixin):
                 return -diff_term * u_observed
 
         raise ValueError(
-            f"Outcome variable '{outcome_name}' or observed variable '{observed_name}' not found in the SEM."
+            f"Outcome variable '{outcome_name}' or observed variable '{observed_name}' not found in the SCM."
         )
 
     def _compute_outcome_mean_from_noise(
@@ -364,4 +364,4 @@ class CausalBiasMixin(CausalEffectMixin):
                 residual = ((observed[name] - f_mean) / sigma).detach()
                 values[name] = variable.f(parents, residual, f_mean=f_mean)
 
-        raise ValueError(f"Outcome variable '{outcome_name}' not found in the SEM.")
+        raise ValueError(f"Outcome variable '{outcome_name}' not found in the SCM.")

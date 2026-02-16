@@ -11,11 +11,11 @@ from typing import Any, Callable, Sequence
 import torch
 from torch import Tensor
 
-from steindag.sem.base import SEM
-from steindag.sem.random import RandomSEMConfig, random_sem, resolve_transforms
-from steindag.variable.base import Variable
-from steindag.variable.linear import LinearVariable
-from steindag.variable.functional import FunctionalVariable
+from inga.scm.base import SCM
+from inga.scm.random import RandomSCMConfig, random_scm, resolve_transforms
+from inga.variable.base import Variable
+from inga.variable.linear import LinearVariable
+from inga.variable.functional import FunctionalVariable
 
 
 @dataclass(frozen=True)
@@ -28,10 +28,10 @@ class CausalQueryConfig:
 
 
 @dataclass(frozen=True)
-class SEMDataset:
+class SCMDataset:
     """Dataset containing samples and causal query results."""
 
-    sem: SEM
+    scm: SCM
     data: dict[str, Tensor]
     queries: list[CausalQueryConfig]
     causal_effects: dict[tuple[str, str, tuple[str, ...]], Tensor]
@@ -43,7 +43,7 @@ class SEMDataset:
         base_path.parent.mkdir(parents=True, exist_ok=True)
 
         metadata = {
-            "sem": _serialize_sem(self.sem),
+            "scm": _serialize_scm(self.scm),
             "queries": [
                 {
                     "treatment_name": query.treatment_name,
@@ -72,10 +72,10 @@ class SEMDataset:
 
 
 @dataclass(frozen=True)
-class SEMDatasetConfig:
-    """Configuration for SEM dataset generation."""
+class SCMDatasetConfig:
+    """Configuration for SCM dataset generation."""
 
-    sem_config: RandomSEMConfig
+    scm_config: RandomSCMConfig
     num_samples: int = 1000
     num_queries: int = 10
     min_observed: int = 1
@@ -132,17 +132,17 @@ def _sample_query(
     )
 
 
-def generate_sem_dataset(config: SEMDatasetConfig) -> SEMDataset:
-    """Generate a SEM dataset with multiple causal queries."""
+def generate_scm_dataset(config: SCMDatasetConfig) -> SCMDataset:
+    """Generate a SCM dataset with multiple causal queries."""
     if config.num_samples <= 0:
         raise ValueError("num_samples must be positive.")
     if config.num_queries <= 0:
         raise ValueError("num_queries must be positive.")
 
     rng = random.Random(config.seed)
-    sem = random_sem(config.sem_config)
-    data = sem.generate(config.num_samples)
-    variable_names = list(sem._variables.keys())
+    scm = random_scm(config.scm_config)
+    data = scm.generate(config.num_samples)
+    variable_names = list(scm._variables.keys())
 
     queries = [
         _sample_query(
@@ -176,13 +176,13 @@ def generate_sem_dataset(config: SEMDatasetConfig) -> SEMDataset:
 
     for query in expanded_queries:
         observed = {name: data[name] for name in query.observed_names}
-        sem.posterior.fit(observed)
-        effect = sem.causal_effect(
+        scm.posterior.fit(observed)
+        effect = scm.causal_effect(
             observed,
             treatment_name=query.treatment_name,
             outcome_name=query.outcome_name,
         )
-        bias = sem.causal_bias(
+        bias = scm.causal_bias(
             observed,
             treatment_name=query.treatment_name,
             outcome_name=query.outcome_name,
@@ -195,8 +195,8 @@ def generate_sem_dataset(config: SEMDatasetConfig) -> SEMDataset:
         causal_effects[key] = effect
         causal_biases[key] = bias
 
-    return SEMDataset(
-        sem=sem,
+    return SCMDataset(
+        scm=scm,
         data=data,
         queries=expanded_queries,
         causal_effects=causal_effects,
@@ -204,13 +204,13 @@ def generate_sem_dataset(config: SEMDatasetConfig) -> SEMDataset:
     )
 
 
-def load_sem_dataset(path: str | Path) -> SEMDataset:
-    """Load a SEM dataset from disk."""
+def load_scm_dataset(path: str | Path) -> SCMDataset:
+    """Load a SCM dataset from disk."""
     base_path = Path(path)
     metadata = json.loads(base_path.with_suffix(".json").read_text())
     arrays = torch.load(base_path.with_suffix(".pt"))
 
-    sem = _deserialize_sem(metadata["sem"])
+    scm = _deserialize_scm(metadata["scm"])
     data = {
         key.split("::", 1)[1]: value
         for key, value in arrays.items()
@@ -235,8 +235,8 @@ def load_sem_dataset(path: str | Path) -> SEMDataset:
         for idx, key in enumerate(metadata["bias_keys"])
     }
 
-    return SEMDataset(
-        sem=sem,
+    return SCMDataset(
+        scm=scm,
         data=data,
         queries=queries,
         causal_effects=causal_effects,
@@ -244,10 +244,10 @@ def load_sem_dataset(path: str | Path) -> SEMDataset:
     )
 
 
-def _serialize_sem(sem: SEM) -> dict[str, Any]:
-    """Serialize SEM definition to a JSON-compatible spec."""
+def _serialize_scm(scm: SCM) -> dict[str, Any]:
+    """Serialize SCM definition to a JSON-compatible spec."""
     variables = []
-    for name, variable in sem._variables.items():
+    for name, variable in scm._variables.items():
         if isinstance(variable, LinearVariable):
             variables.append(
                 {
@@ -277,16 +277,16 @@ def _serialize_sem(sem: SEM) -> dict[str, Any]:
     return {"variables": variables}
 
 
-def _deserialize_sem(spec: dict[str, Any]) -> SEM:
-    """Reconstruct a SEM from a serialized spec."""
+def _deserialize_scm(spec: dict[str, Any]) -> SCM:
+    """Reconstruct a SCM from a serialized spec."""
     variables_spec = spec["variables"]
     if not isinstance(variables_spec, list):
-        raise ValueError("SEM spec 'variables' must be a list.")
+        raise ValueError("SCM spec 'variables' must be a list.")
 
     variables: list[Variable] = []
     for item in variables_spec:
         if not isinstance(item, dict):
-            raise ValueError("SEM variable spec entries must be dictionaries.")
+            raise ValueError("SCM variable spec entries must be dictionaries.")
         var_type = item.get("type")
         if var_type == "linear":
             variables.append(
@@ -320,7 +320,7 @@ def _deserialize_sem(spec: dict[str, Any]) -> SEM:
         else:
             raise ValueError(f"Unsupported variable type '{var_type}'.")
 
-    return SEM(variables=variables)
+    return SCM(variables=variables)
 
 
 def _build_f_mean_from_spec(

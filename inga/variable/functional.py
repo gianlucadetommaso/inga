@@ -1,4 +1,4 @@
-"""Functional variable implementation for structural equation models."""
+"""Functional variable implementation for structural causal models."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from typing import Callable, Iterable
 
 from torch import Tensor
 
-from steindag.variable.base import Variable
+from inga.variable.base import Variable
 
 
 class FunctionalVariable(Variable):

@@ -2,9 +2,9 @@
 
 import pytest
 import torch
-from steindag.variable.base import Variable
-from steindag.variable.linear import LinearVariable
-from steindag.variable.functional import FunctionalVariable
+from inga.variable.base import Variable
+from inga.variable.linear import LinearVariable
+from inga.variable.functional import FunctionalVariable
 
 
 class ConcreteVariable(Variable):

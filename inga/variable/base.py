@@ -1,11 +1,11 @@
-"""Base classes for structural equation model variables."""
+"""Base classes for structural causal model variables."""
 
 from torch import Tensor
 from typing import Iterable
 
 
 class Variable:
-    """A variable in a structural equation model.
+    """A variable in a structural causal model.
 
     A variable is defined by its name, parent variables, and optional noise
     standard deviation.

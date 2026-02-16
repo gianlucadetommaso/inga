@@ -1,4 +1,4 @@
-"""HTML-related utilities for SEM visualization/export."""
+"""HTML-related utilities for SCM visualization/export."""
 
 from __future__ import annotations
 
@@ -10,15 +10,15 @@ from typing import TYPE_CHECKING, Any
 
 import torch
 
-from steindag.variable.functional import FunctionalVariable
-from steindag.variable.linear import LinearVariable
+from inga.variable.functional import FunctionalVariable
+from inga.variable.linear import LinearVariable
 
 if TYPE_CHECKING:
-    from steindag.variable.base import Variable
+    from inga.variable.base import Variable
 
 
 class HTMLMixin:
-    """Mixin with HTML rendering/export functionality for SEM artifacts."""
+    """Mixin with HTML rendering/export functionality for SCM artifacts."""
 
     _variables: dict[str, Variable]
     _validate_causal_query: Any
@@ -40,7 +40,7 @@ class HTMLMixin:
         max_precomputed_states: int = 1200,
         title: str = "SCM Explorer",
     ) -> Path:
-        """Export an interactive HTML explorer with sliders and SEM context."""
+        """Export an interactive HTML explorer with sliders and SCM context."""
         output = Path(output_path)
         if not observed_ranges:
             raise ValueError("`observed_ranges` must contain at least one variable.")
@@ -382,7 +382,7 @@ class HTMLMixin:
 <head>
   <meta charset=\"utf-8\" />
   <meta name=\"viewport\" content=\"width=device-width,initial-scale=1\" />
-  <title>SteinDAG Explorer</title>
+  <title>SCM Explorer</title>
   <script src=\"https://cdn.plot.ly/plotly-2.35.2.min.js\"></script>
   <script>
     window.MathJax = {{

@@ -1,6 +1,6 @@
 """Utilities shared by example/benchmark scripts.
 
-This module intentionally has *no* dependency on steindag internals, so it can
+This module intentionally has *no* dependency on inga internals, so it can
 be reused across multiple example scripts.
 """
 
@@ -147,7 +147,7 @@ def extract_observed_bundle(
     *,
     strategy: str = "max_treatments",
 ) -> tuple[list[str], str, Tensor, Tensor, Tensor]:
-    """Extract a bundle (observed features, outcome, y, CE, CB) from a SEM dataset.
+    """Extract a bundle (observed features, outcome, y, CE, CB) from a SCM dataset.
 
     This unifies extraction across benchmarks.
 

@@ -1,4 +1,4 @@
-"""Random SEM generator utilities."""
+"""Random SCM generator utilities."""
 
 from __future__ import annotations
 
@@ -10,15 +10,15 @@ import torch
 from torch import Tensor
 from torch.nn import functional as F
 
-from steindag.sem.base import SEM
-from steindag.variable.base import Variable
-from steindag.variable.linear import LinearVariable
-from steindag.variable.functional import FunctionalVariable
+from inga.scm.base import SCM
+from inga.variable.base import Variable
+from inga.variable.linear import LinearVariable
+from inga.variable.functional import FunctionalVariable
 
 
 @dataclass(frozen=True)
-class RandomSEMConfig:
-    """Configuration for random SEM generation."""
+class RandomSCMConfig:
+    """Configuration for random SCM generation."""
 
     num_variables: int
     parent_prob: float = 0.3
@@ -150,8 +150,8 @@ def _validate_dag(variables: list[str], parent_map: dict[str, list[str]]) -> Non
         raise ValueError("Parent assignment produced a cyclic graph.")
 
 
-def random_sem(config: RandomSEMConfig) -> SEM:
-    """Generate a random SEM with nonlinear mean functions and DAG structure."""
+def random_scm(config: RandomSCMConfig) -> SCM:
+    """Generate a random SCM with nonlinear mean functions and DAG structure."""
     if config.num_variables <= 0:
         raise ValueError("num_variables must be positive.")
     if not (0.0 <= config.parent_prob <= 1.0):
@@ -202,4 +202,4 @@ def random_sem(config: RandomSEMConfig) -> SEM:
             )
 
     _validate_dag(variable_names, parent_map)
-    return SEM(variables=variables)
+    return SCM(variables=variables)
