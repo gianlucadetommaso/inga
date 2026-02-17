@@ -28,7 +28,7 @@ import pytest
             [
                 r"Per-seed results \(seed=00\)",
                 r"Summary across seeds",
-                r"\|\s*causal_multitask\s*\|",
+                r"\|\s*causal_consistency\s*\|",
             ],
         ),
         (

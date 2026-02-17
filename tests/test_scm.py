@@ -252,7 +252,7 @@ class TestSEMPosteriorPredictiveHTML:
         )
 
         out = scm.export_html(
-            output_path=tmp_path / "posterior_explorer.html",
+            output_path=tmp_path / "explorer.html",
             observed_ranges={"X": (-1.0, 1.0, 3)},
             baseline_observed={"X": 0.0},
             num_posterior_samples=40,
@@ -297,7 +297,7 @@ class TestSEMPosteriorPredictiveHTML:
 
         with pytest.raises(ValueError, match="Cross-product grid too large"):
             scm.export_html(
-                output_path="plots/posterior_explorer_too_large.html",
+                output_path="plots/explorer_too_large.html",
                 observed_ranges={
                     "X": (-1.0, 1.0, 7),
                     "Y": (-1.0, 1.0, 7),
@@ -331,7 +331,7 @@ class TestSEMPosteriorPredictiveHTML:
         )
 
         out = scm.export_html(
-            output_path=tmp_path / "posterior_explorer_causal.html",
+            output_path=tmp_path / "explorer_causal.html",
             observed_ranges={"X": (-1.0, 1.0, 3), "Z": (-1.0, 1.0, 3)},
             baseline_observed={"X": 0.0, "Z": 0.0},
             outcome_name="Y",

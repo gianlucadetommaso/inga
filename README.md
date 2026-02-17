@@ -1,39 +1,42 @@
-# inga
+# Inga 因果
 
-`inga` is a Python toolkit for **structural causal models (SCMs)** focused on causal simulation, inference, and model benchmarking.
+`inga` is a Python toolkit for **structural causal models (SCMs)** focused on building, simulating, and analyzing causal systems.
+
+![Flow X to Y](plots/posterior_explorer_assets/flow_X_to_Y.gif)
 
 ## Purpose
 
-This repository is designed to help you:
+This repository provides a practical workflow for causal modeling experiments. You can use it to:
 
-- define and sample from SCMs,
-- generate synthetic datasets with causal annotations,
-- estimate causal quantities (causal effects and causal bias),
-- inspect model behavior with interactive HTML explorers,
+- define SCMs from explicit structural equations,
+- simulate observational/posterior predictive samples,
+- compute causal quantities such as causal effect and causal bias,
+- export visual diagnostics (DAGs, animations, and interactive HTML explorers),
 - benchmark causal-consistency training against standard baselines.
 
-In short: it is a practical playground for building and testing causal ML workflows end-to-end.
+In short, `inga` helps you go from **SCM specification** to **causal analysis and benchmarking** in one place.
 
 ## Installation
 
-### With `uv` (recommended)
+`inga` is currently intended to be installed from GitHub (not from PyPI).
+
+### 1) Clone the repository
+
+```bash
+git clone https://github.com/gianlucadetommaso/steindag.git
+cd steindag
+```
+
+### 2) Install and manage dependencies with `uv` (recommended)
 
 ```bash
 uv sync
 ```
 
-Run scripts with:
+To run an example script, execute
 
 ```bash
 uv run python -m examples.explore
-```
-
-### With `pip`
-
-```bash
-python -m venv .venv
-.venv\Scripts\activate
-pip install -e .
 ```
 
 ## What this repo can do
@@ -59,10 +62,21 @@ These are available directly from `SCM` objects and are used throughout tests an
 You can export an interactive explorer with sliders, posterior predictive histograms, DAG visuals, and causal plots.
 
 ```bash
-uv run python -m examples.explore --output plots/scm_explorer.html
+uv run python -m examples.explore --output plots/explorer.html
 ```
 
 This generates an HTML page plus assets in `plots/` for visual causal analysis.
+
+Generated example included in this repo:
+
+- Interactive HTML: [`plots/explorer.html`](plots/explorer.html)
+- Assets folder: [`plots/explorer_assets/`](plots/explorer_assets/)
+
+Preview from the generated page (click to open the interactive HTML):
+
+[![Posterior explorer preview](plots/explorer_assets/dag.png)](plots/explorer.html)
+
+> Note: GitHub README renders a static preview image; the full interactivity is available when opening `plots/explorer.html` in a browser.
 
 ### 4) Train causal-consistency models that beat baselines
 

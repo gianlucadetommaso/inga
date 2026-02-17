@@ -1,8 +1,8 @@
 """Create an interactive posterior explorer HTML (multi-observation example).
 
 Usage:
-    uv run python -m examples.posterior_explorer
-    uv run python -m examples.posterior_explorer --output plots/posterior_explorer.html
+    uv run python -m examples.explorer
+    uv run python -m examples.explorer --output plots/explorer.html
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ def main() -> None:
     parser.add_argument(
         "--output",
         type=str,
-        default="plots/posterior_explorer.html",
+        default="plots/explorer.html",
         help="Output HTML path.",
     )
     parser.add_argument(

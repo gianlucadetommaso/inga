@@ -41,7 +41,7 @@ def main() -> None:
     outcome_name = "Y"
     observed_names = ["X", "V2", "V4", "V5"]
 
-    output = scm.animate(
+    output = scm.animate_flow_gif(
         output_path=args.output,
         observed_names=observed_names,
         treatment_name=treatment_name,

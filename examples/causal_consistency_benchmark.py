@@ -43,7 +43,7 @@ class MLPRegressor(nn.Module):
         return self.net(x).squeeze(-1)
 
 
-class CausalThreeHead(nn.Module):
+class CausalConsistencyModel(nn.Module):
     def __init__(self, in_dim: int, num_treatments: int, hidden_dim: int = 64) -> None:
         super().__init__()
         self.trunk = nn.Sequential(
@@ -114,7 +114,7 @@ def train_standard_or_l2(
     return RegimeResult(pred_mae=pred_mae, ce_mae=ce_mae)
 
 
-def train_causal_three_head(
+def train_causal_consistency(
     x_train: Tensor,
     y_train: Tensor,
     ce_train_by_treatment: Tensor,
@@ -131,7 +131,9 @@ def train_causal_three_head(
     lambda_consistency: float,
 ) -> RegimeResult:
     num_treatments = ce_train_by_treatment.shape[1]
-    model = CausalThreeHead(in_dim=x_train.shape[1], num_treatments=num_treatments)
+    model = CausalConsistencyModel(
+        in_dim=x_train.shape[1], num_treatments=num_treatments
+    )
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     mse = nn.MSELoss()
     l1 = nn.L1Loss()
@@ -242,7 +244,7 @@ def run_seed(
         lr=lr,
         weight_decay=1e-3,
     )
-    causal = train_causal_three_head(
+    causal = train_causal_consistency(
         x_train,
         y_train,
         ce_train,
@@ -260,7 +262,7 @@ def run_seed(
     return {
         "standard": standard,
         "l2": l2,
-        "causal_multitask": causal,
+        "causal_consistency": causal,
     }
 
 
@@ -278,12 +280,17 @@ def main() -> None:
     per_regime_pred: dict[str, list[float]] = {
         "standard": [],
         "l2": [],
-        "causal_multitask": [],
+        "causal_consistency": [],
     }
     per_regime_ce: dict[str, list[float]] = {
         "standard": [],
         "l2": [],
-        "causal_multitask": [],
+        "causal_consistency": [],
+    }
+    win_counts: dict[str, float] = {
+        "standard": 0.0,
+        "l2": 0.0,
+        "causal_consistency": 0.0,
     }
     per_seed_rows: list[list[str]] = []
 
@@ -309,6 +316,16 @@ def main() -> None:
             ]
             per_seed_rows.append(row)
             seed_rows.append(row)
+
+        best_pred = min(metrics.pred_mae for metrics in result.values())
+        winning_regimes = [
+            regime
+            for regime, metrics in result.items()
+            if abs(metrics.pred_mae - best_pred) <= 1e-12
+        ]
+        winner_credit = 1.0 / len(winning_regimes)
+        for regime in winning_regimes:
+            win_counts[regime] += winner_credit
 
         print_table(
             title=f"Per-seed results (seed={seed:02d})",
@@ -341,31 +358,26 @@ def main() -> None:
     )
 
     summary_rows: list[list[str]] = []
+    denom = max(args.num_seeds, 1)
     for regime in per_regime_pred:
         pred_stats = summary(per_regime_pred[regime])
         ce_stats = summary(per_regime_ce[regime])
         summary_rows.append(
             [
                 regime,
-                f"{pred_stats['mean']:.6f}",
-                f"{pred_stats['median']:.6f}",
-                f"{pred_stats['std']:.6f}",
-                f"{ce_stats['mean']:.6f}",
-                f"{ce_stats['median']:.6f}",
-                f"{ce_stats['std']:.6f}",
+                f"{pred_stats['mean']:.4f} [{pred_stats['std']:.2f}]",
+                f"{ce_stats['mean']:.4f} [{ce_stats['std']:.2f}]",
+                f"{win_counts[regime] / denom:.4f}",
             ]
         )
 
     print_table(
         "Summary across seeds",
         [
-            "regime",
-            "pred_mean",
-            "pred_median",
-            "pred_std",
-            "ce_mean",
-            "ce_median",
-            "ce_std",
+            "method_type",
+            "prediction_mae",
+            "causal_effect_mae",
+            "prediction_win_fraction",
         ],
         summary_rows,
     )
