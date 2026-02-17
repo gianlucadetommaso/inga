@@ -17,7 +17,9 @@ def test_run_commands_unknown_command_exits() -> None:
     assert exc.value.code == 1
 
 
-def test_run_commands_stops_on_failed_subprocess(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_run_commands_stops_on_failed_subprocess(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """A non-zero subprocess exit should be propagated."""
 
     def fake_run(_cmd: list[str]) -> SimpleNamespace:
@@ -49,7 +51,9 @@ def test_run_commands_executes_in_order(monkeypatch: pytest.MonkeyPatch) -> None
     ]
 
 
-def test_dev_runs_default_pipeline_without_args(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_dev_runs_default_pipeline_without_args(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Calling ``dev`` with no CLI args should run default steps."""
     called_with: list[list[str]] = []
 

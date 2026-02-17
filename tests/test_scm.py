@@ -262,7 +262,7 @@ class TestSEMPosteriorPredictiveHTML:
         assert out.exists()
         html = out.read_text(encoding="utf-8")
         assert "Plotly.react" in html
-        assert "SCM Explorer" in html
+        assert "Dataset Card" in html
         assert "slider_names" in html
         assert (
             "const nbins = Math.max(15, Math.round(Math.sqrt(samples.length || 1)));"

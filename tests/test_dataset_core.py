@@ -84,7 +84,9 @@ def test_query_key_shapes_tuple() -> None:
 def test_generate_dataset_from_scm_validates_basic_arguments() -> None:
     scm = SCM(
         variables=[
-            LinearVariable(name="X", parent_names=[], sigma=1.0, coefs={}, intercept=0.0),
+            LinearVariable(
+                name="X", parent_names=[], sigma=1.0, coefs={}, intercept=0.0
+            ),
             LinearVariable(
                 name="Y",
                 parent_names=["X"],
@@ -101,7 +103,7 @@ def test_generate_dataset_from_scm_validates_basic_arguments() -> None:
     with pytest.raises(ValueError, match="num_queries"):
         generate_dataset_from_scm(scm=scm, num_samples=2, num_queries=0)
 
-    with pytest.raises(ValueError, match="must match len\(queries\)"):
+    with pytest.raises(ValueError, match=r"must match len\(queries\)"):
         generate_dataset_from_scm(
             scm=scm,
             num_samples=2,
