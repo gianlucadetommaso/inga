@@ -10,11 +10,11 @@ from typing import TYPE_CHECKING, Any
 
 import torch
 
-from inga.variable.functional import FunctionalVariable
-from inga.variable.linear import LinearVariable
+from inga.scm.variable.functional import FunctionalVariable
+from inga.scm.variable.linear import LinearVariable
 
 if TYPE_CHECKING:
-    from inga.variable.base import Variable
+    from inga.scm.variable.base import Variable
 
 
 class HTMLMixin:
@@ -38,7 +38,7 @@ class HTMLMixin:
         outcome_name: str | None = None,
         num_posterior_samples: int = 400,
         max_precomputed_states: int = 1200,
-        title: str = "SCM Explorer",
+        title: str = "Dataset Card",
     ) -> Path:
         """Export an interactive HTML explorer with sliders and SCM context."""
         output = Path(output_path)
@@ -382,7 +382,7 @@ class HTMLMixin:
 <head>
   <meta charset=\"utf-8\" />
   <meta name=\"viewport\" content=\"width=device-width,initial-scale=1\" />
-  <title>SCM Explorer</title>
+  <title>Dataset Card</title>
   <script src=\"https://cdn.plot.ly/plotly-2.35.2.min.js\"></script>
   <script>
     window.MathJax = {{
@@ -584,13 +584,11 @@ class HTMLMixin:
 <body>
   <div class=\"container\">
     <div class=\"dag-panel\">
-      <div class=\"dag-title\">DAG structure</div>
       <div id=\"top-schedules\" class=\"top-schedules\"></div>
       <div id=\"dag-view\" class=\"top-view\">
         <img id=\"dag-image\" class=\"dag-image\" alt=\"DAG\" />
       </div>
       <div id=\"scm-view\" class=\"top-view\" style=\"display:none\">
-        <h3 class=\"scm-top-title\">Structural causal model</h3>
         <div id=\"scm\" class=\"scm-card\"></div>
       </div>
     </div>

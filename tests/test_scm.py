@@ -3,8 +3,8 @@
 import matplotlib
 import torch
 import pytest
-from inga.variable.base import Variable
-from inga.variable.linear import LinearVariable
+from inga.scm.variable.base import Variable
+from inga.scm.variable.linear import LinearVariable
 from inga.scm.base import SCM
 from inga.scm.random import (
     RandomSCMConfig,
@@ -813,7 +813,7 @@ class TestRandomSEM:
 
     def test_random_scm_includes_nonlinear_variables(self) -> None:
         """Ensure nonlinear option creates at least one FunctionalVariable when forced."""
-        from inga.variable.functional import FunctionalVariable
+        from inga.scm.variable.functional import FunctionalVariable
 
         config = RandomSCMConfig(
             num_variables=4,

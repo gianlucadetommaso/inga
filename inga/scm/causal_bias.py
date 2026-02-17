@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 from inga.scm.causal_effect import CausalEffectMixin
 
 if TYPE_CHECKING:
-    from inga.variable.base import Variable
+    from inga.scm.variable.base import Variable
     from inga.approx_posterior.laplace import LaplacePosterior
 
 

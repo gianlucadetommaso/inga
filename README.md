@@ -68,15 +68,15 @@ $$
 ### A Small Benchmark
 The small benchmark [causal_consistency_benchmark.py](examples/causal_consistency_benchmark.py) demonstrates this intution. A simple MLP encoder is attached to three linear heads, respectively predicting outcomes, causal effects and causal biases. The model is trained and tested individually on splits of 30 randomly generated synthetic dataset. 
 
-```
+<pre>
 +--------------------+----------------+-------------------+-------------------------+
 | method_type        | prediction_mae | causal_effect_mae | prediction_win_fraction |
 +--------------------+----------------+-------------------+-------------------------+
 | standard           | 0.7909 [0.31]  | 0.3353 [0.45]     | 0.0667                  |
 | l2                 | 0.7868 [0.31]  | 0.3141 [0.46]     | 0.0667                  |
-| causal_consistency | 0.7694 [0.31]  | 0.0461 [0.21]     | 0.8667                  |
+| causal_consistency | <b>0.7694</b> [0.31]  | <b>0.0461</b> [0.21]     | <b>0.8667</b>                  |
 +--------------------+----------------+-------------------+-------------------------+
-```
+</pre>
 
 The table shows that not only the model trained using causal consistency provides much more reliable causal effect estimates, but also decreases the generalization error on ~87% of the datasets. Results can be replicated by running `uv run python examples/causal_consistency_benchmark.py`.
 
@@ -102,4 +102,127 @@ Run scripts, for example:
 uv run python -m examples.explore
 ```
 
+### Create a DAG
+You can create and draw the DAG of a SCM as follows:
+```python
+from inga.scm import SCM, Variable
+
+scm = SCM(
+    variables=[
+        Variable(name="Z"),
+        Variable(name="X", parent_names=["Z"]),
+        Variable(name="Y", parent_names=["Z", "X"]),
+    ]
+)
+
+scm.draw(output_path="YOUR_DAG.png")
+```
+
 ### Create a SCM
+The class `Variable` defines a variable $V_i$ in the DAG, but leaves the mean function $\bar f_{V_i}$. To complete the SCM and compute causal quantities, you must create a child class that defines the mean function. For example:
+
+```python
+import torch
+from torch import Tensor
+from inga.scm import Variable
+
+class MyVariable(Variable):
+    def f_mean(self, parents: dict[str, Tensor]) -> Tensor:
+        f_mean: Tensor | float = 0.0
+
+        for parent in parents.values():
+            f_mean = f_mean + torch.sin(parent)
+        
+        return f_mean
+```
+
+An example of built-in `Variable` with defined mean function is [LinearVariable](inga/scm/variable/linear.py). Now, Let's update the SCM using our newly defined variable class!
+
+```python
+from inga.scm import SCM
+
+scm = SCM(
+    variables=[
+        MyVariable(name="Z", sigma=1.0),
+        MyVariable(name="X", sigma=1.0, parent_names=["Z"]),
+        MyVariable(name="Y", sigma=1.0, parent_names=["Z", "X"]),
+    ]
+)
+```
+
+### Compute causal effect and causal bias
+We are ready to compute causal effect and causal bias. We need to define treatment variable, outcome variable and observed variables. Note: the treatment should always be observed, while the outcome should never be. Here an example:
+
+```python
+from torch import Tensor
+
+treatment_name, outcome_name = "X", "Y"
+observed = {"X": Tensor([1.])}
+
+scm.posterior.fit(observed)
+
+causal_effect = scm.causal_effect(
+    observed=observed, 
+    treatment_name=treatment_name, 
+    outcome_name=outcome_name
+)
+causal_bias = scm.causal_bias(
+    observed=observed, 
+    treatment_name=treatment_name, 
+    outcome_name=outcome_name
+)
+```
+
+### Explore the dataset
+You can investigate the dataset interactively by exporting the SCM to HTML:
+
+```python
+scm.export_html(
+    output_path="YOUR_SCM.html",
+    observed_ranges={"X": (-2.0, 2.0)}
+)
+```
+
+Run `uv run python examples/explore.py` to checkout an example of this!
+
+### Generate, save and load SCM datasets
+Given that we have constructed our SCM, let's generate, save and load a SCM dataset. 
+
+```python
+from inga.scm import CausalQueryConfig, load_scm_dataset
+
+dataset = scm.generate_dataset(
+    num_samples=128,
+    seed=123,
+    queries=[
+        CausalQueryConfig(
+            treatment_name="X",
+            outcome_name="Y",
+            observed_names=["X"],
+        ),
+    ],
+)
+
+dataset_path = "YOUR_DATASET.json"
+dataset.save(dataset_path)
+loaded_dataset = load_scm_dataset(dataset_path)
+```
+
+## Cite Inga
+If you use `inga` in academic work, you can cite it with the following BibTeX entry (and optionally replace `year` and `note` with the exact release tag/commit and access date you used):
+
+```bibtex
+@software{detommaso_inga,
+  author = {Detommaso, Gianluca},
+  title = {Inga: Causal Synthetic Tabular Data Toolkit},
+  url = {https://github.com/gianlucadetommaso/inga},
+  year = {2026},
+  note = {GitHub repository}
+}
+```
+
+
+
+
+
+

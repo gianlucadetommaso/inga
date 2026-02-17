@@ -10,7 +10,7 @@ from __future__ import annotations
 import argparse
 
 from inga.scm import SCM
-from inga.variable import LinearVariable
+from inga.scm.variable import LinearVariable
 
 
 def main() -> None:
@@ -18,7 +18,7 @@ def main() -> None:
     parser.add_argument(
         "--output",
         type=str,
-        default="plots/explorer.html",
+        default="plots/datacard.html",
         help="Output HTML path.",
     )
     parser.add_argument(
@@ -26,6 +26,18 @@ def main() -> None:
         type=int,
         default=400,
         help="Posterior predictive samples per precomputed slider state.",
+    )
+    parser.add_argument(
+        "--grid-size",
+        type=int,
+        default=5,
+        help="Grid points for X and M sliders (V uses max(2, grid-size - 1)).",
+    )
+    parser.add_argument(
+        "--max-precomputed-states",
+        type=int,
+        default=300,
+        help="Upper bound on precomputed slider states.",
     )
     args = parser.parse_args()
 
@@ -77,14 +89,14 @@ def main() -> None:
     output = scm.export_html(
         output_path=args.output,
         observed_ranges={
-            "X": (-2.0, 2.0, 5),
-            "M": (-2.5, 2.5, 5),
-            "V": (-3.0, 3.0, 4),
+            "X": (-2.0, 2.0, args.grid_size),
+            "M": (-2.5, 2.5, args.grid_size),
+            "V": (-3.0, 3.0, max(2, args.grid_size - 1)),
         },
         baseline_observed={"X": 0.0, "M": 0.0, "V": 0.0},
         outcome_name="Y",
         num_posterior_samples=args.samples,
-        max_precomputed_states=300,
+        max_precomputed_states=args.max_precomputed_states,
         title="SteinDAG Posterior Explorer",
     )
     print(f"Saved interactive posterior explorer to: {output}")

@@ -6,7 +6,7 @@ from typing import Callable, Iterable
 
 from torch import Tensor
 
-from inga.variable.base import Variable
+from inga.scm.variable.base import Variable
 
 
 class FunctionalVariable(Variable):

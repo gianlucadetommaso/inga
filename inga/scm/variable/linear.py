@@ -3,7 +3,7 @@
 import torch
 from torch import Tensor
 from typing import Iterable
-from inga.variable.base import Variable
+from inga.scm.variable.base import Variable
 
 
 class LinearVariable(Variable):
