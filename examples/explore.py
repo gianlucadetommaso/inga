@@ -2,7 +2,7 @@
 
 Usage:
     uv run python -m examples.explorer
-    uv run python -m examples.explorer --output plots/explorer.html
+    uv run python -m examples.explorer --output plots/datacard.html
 """
 
 from __future__ import annotations

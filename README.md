@@ -1,5 +1,9 @@
 # Inga 因果
 
+![Coverage](https://img.shields.io/badge/coverage-91%25-brightgreen)
+
+**Test coverage budget:** keep total coverage at **≥ 85%**.
+
 `inga` is a toolkit for generating and inspecting synthetic tabular datasets. It constructs arbitrarily complex Structural Causal Models (SCMs), draws samples from them, and computes causal effects and causal biases conditioned on observed variables and outcomes. All computed quantities are stored and made available for causally-informed pre-training of tabular models.
 
 ![Flow X to Y](plots/explorer_assets/flow_X_to_Y.gif)
@@ -220,6 +224,9 @@ If you use `inga` in academic work, you can cite it with the following BibTeX en
   note = {GitHub repository}
 }
 ```
+
+
+
 
 
 
