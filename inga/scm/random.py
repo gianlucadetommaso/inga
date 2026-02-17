@@ -11,9 +11,9 @@ from torch import Tensor
 from torch.nn import functional as F
 
 from inga.scm.base import SCM
-from inga.variable.base import Variable
-from inga.variable.linear import LinearVariable
-from inga.variable.functional import FunctionalVariable
+from inga.scm.variable.base import Variable
+from inga.scm.variable.linear import LinearVariable
+from inga.scm.variable.functional import FunctionalVariable
 
 
 @dataclass(frozen=True)

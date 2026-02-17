@@ -5,12 +5,47 @@ import pytest
 
 from pathlib import Path
 
+from inga.scm.base import SCM
 from inga.scm.dataset import (
+    SCMDataset,
     SCMDatasetConfig,
     generate_scm_dataset,
     load_scm_dataset,
 )
+from inga.scm.dataset_core import CausalQueryConfig as CoreCausalQueryConfig
 from inga.scm.random import RandomSCMConfig
+from inga.scm.variable.base import Variable
+from inga.scm.variable.linear import LinearVariable
+
+
+class ShiftVariable(Variable):
+    """Simple custom variable used to validate SCM (de)serialization extension."""
+
+    def __init__(
+        self,
+        name: str,
+        sigma: float,
+        shift: float,
+        parent_names: list[str] | None = None,
+    ) -> None:
+        super().__init__(name=name, sigma=sigma, parent_names=parent_names)
+        self.shift = shift
+
+    def f_mean(self, parents: dict[str, torch.Tensor]) -> torch.Tensor:
+        if not parents:
+            return torch.tensor(self.shift)
+        reference = next(iter(parents.values()))
+        return torch.zeros_like(reference) + self.shift
+
+
+def _serialize_shift_variable(var: Variable) -> dict[str, object]:
+    assert isinstance(var, ShiftVariable)
+    return {
+        "name": var.name,
+        "sigma": var.sigma,
+        "parent_names": list(var.parent_names),
+        "shift": var.shift,
+    }
 
 
 class TestSCMDataset:
@@ -128,3 +163,113 @@ class TestSCMDataset:
             assert torch.allclose(effect, loaded.causal_effects[key])
         for key, bias in dataset.causal_biases.items():
             assert torch.allclose(bias, loaded.causal_biases[key])
+
+    def test_dataset_load_supports_custom_variable_deserializers(
+        self, tmp_path: Path
+    ) -> None:
+        """Custom variable classes can be serialized/deserialized via extension hooks."""
+        custom = ShiftVariable(name="U", sigma=1.0, shift=0.3)
+        child = LinearVariable(
+            name="X",
+            parent_names=["U"],
+            sigma=1.0,
+            coefs={"U": 1.0},
+            intercept=0.0,
+        )
+        scm = SCM(variables=[custom, child])
+        data = scm.generate(12)
+
+        dataset = SCMDataset(
+            scm=scm,
+            data=data,
+            queries=[],
+            causal_effects={},
+            causal_biases={},
+        )
+        target = tmp_path / "scm_dataset_custom"
+
+        dataset.save(
+            target,
+            variable_serializers={
+                ShiftVariable: _serialize_shift_variable,
+            },
+        )
+
+        class_path = f"{ShiftVariable.__module__}.{ShiftVariable.__qualname__}"
+        loaded = load_scm_dataset(
+            target,
+            variable_deserializers={
+                class_path: lambda payload: ShiftVariable(
+                    name=payload["name"],
+                    sigma=payload["sigma"],
+                    shift=payload["shift"],
+                    parent_names=payload.get("parent_names"),
+                )
+            },
+        )
+
+        loaded_custom = loaded.scm._variables["U"]
+        assert isinstance(loaded_custom, ShiftVariable)
+        assert loaded_custom.shift == pytest.approx(0.3)
+
+    def test_generate_dataset_from_user_provided_scm(self) -> None:
+        """Users can generate datasets from a specific (non-random) SCM."""
+        scm = SCM(
+            variables=[
+                LinearVariable(
+                    name="Z", parent_names=[], sigma=1.0, coefs={}, intercept=0.0
+                ),
+                LinearVariable(
+                    name="X",
+                    parent_names=["Z"],
+                    sigma=1.0,
+                    coefs={"Z": 1.0},
+                    intercept=0.0,
+                ),
+                LinearVariable(
+                    name="Y",
+                    parent_names=["X"],
+                    sigma=1.0,
+                    coefs={"X": 2.0},
+                    intercept=0.0,
+                ),
+            ]
+        )
+
+        dataset = scm.generate_dataset(
+            num_samples=64,
+            num_queries=2,
+            min_observed=1,
+            seed=7,
+            queries=[
+                CoreCausalQueryConfig(
+                    treatment_name="X",
+                    outcome_name="Y",
+                    observed_names=["X"],
+                ),
+                CoreCausalQueryConfig(
+                    treatment_name="X",
+                    outcome_name="Z",
+                    observed_names=["X", "Y"],
+                ),
+            ],
+        )
+
+        assert dataset.scm is scm
+        assert set(dataset.data.keys()) == {"Z", "X", "Y"}
+        for values in dataset.data.values():
+            assert values.shape == (64,)
+
+        assert len(dataset.queries) == 2
+        assert len(dataset.causal_effects) == 2
+        assert len(dataset.causal_biases) == 2
+        assert dataset.queries[0] == CoreCausalQueryConfig(
+            treatment_name="X",
+            outcome_name="Y",
+            observed_names=["X"],
+        )
+        assert dataset.queries[1] == CoreCausalQueryConfig(
+            treatment_name="X",
+            outcome_name="Z",
+            observed_names=["X", "Y"],
+        )

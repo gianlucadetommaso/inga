@@ -10,7 +10,7 @@ from __future__ import annotations
 import argparse
 
 from inga.scm import SCM
-from inga.variable import Variable
+from inga.scm.variable import Variable
 
 
 def main() -> None:

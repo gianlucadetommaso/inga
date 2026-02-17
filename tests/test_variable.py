@@ -2,9 +2,9 @@
 
 import pytest
 import torch
-from inga.variable.base import Variable
-from inga.variable.linear import LinearVariable
-from inga.variable.functional import FunctionalVariable
+from inga.scm.variable.base import Variable
+from inga.scm.variable.linear import LinearVariable
+from inga.scm.variable.functional import FunctionalVariable
 
 
 class ConcreteVariable(Variable):
@@ -44,11 +44,18 @@ class TestVariable:
         with pytest.raises(NotImplementedError, match="structural function"):
             var.f_mean({})
 
-    def test_base_variable_f_not_implemented(self) -> None:
-        """Bare Variable should not implement a full structural equation."""
+    def test_base_variable_f_requires_f_mean(self) -> None:
+        """Base f delegates to f_mean and errors when no structural function exists."""
         var = Variable(name="X", sigma=1.0)
 
-        with pytest.raises(NotImplementedError, match="structural equation"):
+        with pytest.raises(NotImplementedError, match="structural function"):
+            var.f({}, torch.randn(3))
+
+    def test_base_variable_f_raises_without_sigma(self) -> None:
+        """Base f should error when sigma is not configured."""
+        var = ConcreteVariable(name="X", sigma=None)
+
+        with pytest.raises(ValueError, match="has no sigma configured"):
             var.f({}, torch.randn(3))
 
 

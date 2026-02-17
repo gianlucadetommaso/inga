@@ -3,19 +3,20 @@ from __future__ import annotations
 import re
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
 
 @pytest.mark.integration
 @pytest.mark.parametrize(
-    "cmd, expected_patterns",
+    "cmd, expected_patterns, expected_outputs",
     [
         (
             [
                 sys.executable,
                 "-u",
-                "examples/causal_training_benchmark.py",
+                "examples/causal_consistency_benchmark.py",
                 "--num-seeds",
                 "1",
                 "--epochs",
@@ -28,8 +29,9 @@ import pytest
             [
                 r"Per-seed results \(seed=00\)",
                 r"Summary across seeds",
-                r"\|\s*causal_multitask\s*\|",
+                r"\|\s*causal_consistency\s*\|",
             ],
+            [],
         ),
         (
             [
@@ -52,23 +54,117 @@ import pytest
                 r"Transfer summary \(across test datasets\)",
                 r"\|\s*causal\s*\|",
             ],
+            [],
+        ),
+        (
+            [
+                sys.executable,
+                "-u",
+                "examples/draw.py",
+                "--output",
+                "{tmp}/dag.png",
+                "--dpi",
+                "72",
+            ],
+            [
+                r"Saved DAG PNG to:",
+            ],
+            ["{tmp}/dag.png"],
+        ),
+        (
+            [
+                sys.executable,
+                "-u",
+                "examples/animate.py",
+                "--output",
+                "{tmp}/dag.gif",
+                "--fps",
+                "8",
+                "--frames-per-flow",
+                "8",
+            ],
+            [
+                r"Saved animated DAG flow GIF to:",
+            ],
+            ["{tmp}/dag.gif"],
+        ),
+        (
+            [
+                sys.executable,
+                "-u",
+                "examples/explore.py",
+                "--output",
+                "{tmp}/datacard.html",
+                "--samples",
+                "8",
+                "--grid-size",
+                "2",
+                "--max-precomputed-states",
+                "8",
+            ],
+            [
+                r"Saved interactive posterior explorer to:",
+            ],
+            ["{tmp}/datacard.html"],
+        ),
+        (
+            [
+                sys.executable,
+                "-u",
+                "examples/fixed_scm_dataset.py",
+            ],
+            [
+                r"Generated dataset from fixed SCM",
+                r"Variables:",
+                r"Queries:\s*2",
+            ],
+            [],
+        ),
+        (
+            [
+                sys.executable,
+                "-u",
+                "examples/save_load_dataset.py",
+                "--output",
+                "{tmp}/scm_dataset_example",
+                "--samples",
+                "16",
+            ],
+            [
+                r"Saved dataset to:",
+                r"Loaded variables:",
+                r"Loaded queries:\s*\d+",
+            ],
+            ["{tmp}/scm_dataset_example.json", "{tmp}/scm_dataset_example.pt"],
         ),
     ],
 )
-def test_examples_run(cmd: list[str], expected_patterns: list[str]) -> None:
+def test_examples_run(
+    cmd: list[str],
+    expected_patterns: list[str],
+    expected_outputs: list[str],
+    tmp_path: Path,
+) -> None:
     """Integration test: examples should run end-to-end and produce expected output.
 
     We keep hyperparameters tiny to keep CI runtime reasonable.
     """
-    proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    materialized_cmd = [part.replace("{tmp}", str(tmp_path)) for part in cmd]
+
+    proc = subprocess.run(materialized_cmd, capture_output=True, text=True, check=False)
     stdout = proc.stdout or ""
     stderr = proc.stderr or ""
 
     assert proc.returncode == 0, (
-        f"Command failed: {cmd}\nSTDOUT:\n{stdout}\nSTDERR:\n{stderr}"
+        f"Command failed: {materialized_cmd}\nSTDOUT:\n{stdout}\nSTDERR:\n{stderr}"
     )
 
     for pat in expected_patterns:
         assert re.search(pat, stdout), (
             f"Missing pattern {pat!r} in output. Output:\n{stdout}"
+        )
+
+    for out in expected_outputs:
+        assert Path(out.replace("{tmp}", str(tmp_path))).exists(), (
+            f"Expected output file not found: {out}"
         )

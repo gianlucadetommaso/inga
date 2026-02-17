@@ -4,12 +4,19 @@ from __future__ import annotations
 
 import torch
 from torch import Tensor
+from typing import TYPE_CHECKING
 
 from inga.approx_posterior.laplace import LaplacePosterior
 from inga.scm.causal_bias import CausalBiasMixin
+from inga.scm.dataset_core import (
+    generate_dataset_from_scm as _generate_dataset_from_scm,
+)
 from inga.scm.html import HTMLMixin
 from inga.scm.plotting import PlottingMixin
-from inga.variable.base import Variable
+from inga.scm.variable.base import Variable
+
+if TYPE_CHECKING:
+    from inga.scm.dataset_core import CausalQueryConfig, SCMDataset
 
 
 class SCM(HTMLMixin, PlottingMixin, CausalBiasMixin):
@@ -71,3 +78,27 @@ class SCM(HTMLMixin, PlottingMixin, CausalBiasMixin):
                 out[name] = variable.f(parents, latent_samples[name])
 
         return out
+
+    def generate_dataset(
+        self,
+        num_samples: int = 1000,
+        num_queries: int | None = None,
+        min_observed: int = 1,
+        seed: int | None = None,
+        treatment_name: str | None = None,
+        queries: list[CausalQueryConfig] | None = None,
+    ) -> SCMDataset:
+        """Generate a causal dataset directly from this SCM.
+
+        This is a convenience wrapper around
+        :func:`inga.scm.dataset.generate_dataset_from_scm`.
+        """
+        return _generate_dataset_from_scm(
+            scm=self,
+            num_samples=num_samples,
+            num_queries=num_queries,
+            min_observed=min_observed,
+            seed=seed,
+            treatment_name=treatment_name,
+            queries=queries,
+        )

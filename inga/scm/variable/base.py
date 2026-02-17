@@ -46,11 +46,16 @@ class Variable:
             f_mean: Optional precomputed mean function value. If None, it will be computed.
 
         Raises:
-            NotImplementedError: Base class does not implement equations.
+            ValueError: If sigma is not configured.
         """
-        raise NotImplementedError(
-            f"Variable '{self.name}' has no structural equation configured."
-        )
+        if self.sigma is None:
+            raise ValueError(
+                f"Variable '{self.name}' has no sigma configured. "
+                "Set sigma to evaluate structural equations."
+            )
+        if f_mean is None:
+            f_mean = self.f_mean(parents)
+        return f_mean + self.sigma * u
 
     def f_mean(self, parents: dict[str, Tensor]) -> Tensor:
         """Compute the mean function (expected value given parents).

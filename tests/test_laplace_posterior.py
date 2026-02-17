@@ -4,9 +4,9 @@ import torch
 from torch import Tensor
 import pytest
 from typing import Mapping
-from inga.variable.base import Variable
-from inga.variable.linear import LinearVariable
-from inga.variable.functional import FunctionalVariable
+from inga.scm.variable.base import Variable
+from inga.scm.variable.linear import LinearVariable
+from inga.scm.variable.functional import FunctionalVariable
 from inga.approx_posterior.laplace import LaplacePosterior, LaplacePosteriorState
 from inga.scm.base import SCM
 from inga.scm.random import RandomSCMConfig, random_scm, resolve_transforms

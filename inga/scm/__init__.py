@@ -8,9 +8,11 @@ from inga.scm.dataset import (
     CausalQueryConfig,
     SCMDataset,
     SCMDatasetConfig,
+    generate_dataset_from_scm,
     generate_scm_dataset,
     load_scm_dataset,
 )
+from inga.scm.variable import LinearVariable, Variable
 
 __all__ = [
     "SCM",
@@ -21,6 +23,9 @@ __all__ = [
     "CausalQueryConfig",
     "SCMDataset",
     "SCMDatasetConfig",
+    "generate_dataset_from_scm",
     "generate_scm_dataset",
     "load_scm_dataset",
+    "Variable",
+    "LinearVariable",
 ]

@@ -10,7 +10,7 @@ from torch import Tensor
 from torch.func import grad
 from functools import partial
 import pytest
-from inga.variable.linear import LinearVariable
+from inga.scm.variable.linear import LinearVariable
 from inga.scm.base import SCM
 
 

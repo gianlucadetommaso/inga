@@ -3,8 +3,8 @@
 import matplotlib
 import torch
 import pytest
-from inga.variable.base import Variable
-from inga.variable.linear import LinearVariable
+from inga.scm.variable.base import Variable
+from inga.scm.variable.linear import LinearVariable
 from inga.scm.base import SCM
 from inga.scm.random import (
     RandomSCMConfig,
@@ -252,7 +252,7 @@ class TestSEMPosteriorPredictiveHTML:
         )
 
         out = scm.export_html(
-            output_path=tmp_path / "posterior_explorer.html",
+            output_path=tmp_path / "explorer.html",
             observed_ranges={"X": (-1.0, 1.0, 3)},
             baseline_observed={"X": 0.0},
             num_posterior_samples=40,
@@ -262,7 +262,7 @@ class TestSEMPosteriorPredictiveHTML:
         assert out.exists()
         html = out.read_text(encoding="utf-8")
         assert "Plotly.react" in html
-        assert "SCM Explorer" in html
+        assert "Dataset Card" in html
         assert "slider_names" in html
         assert (
             "const nbins = Math.max(15, Math.round(Math.sqrt(samples.length || 1)));"
@@ -297,7 +297,7 @@ class TestSEMPosteriorPredictiveHTML:
 
         with pytest.raises(ValueError, match="Cross-product grid too large"):
             scm.export_html(
-                output_path="plots/posterior_explorer_too_large.html",
+                output_path="plots/explorer_too_large.html",
                 observed_ranges={
                     "X": (-1.0, 1.0, 7),
                     "Y": (-1.0, 1.0, 7),
@@ -331,7 +331,7 @@ class TestSEMPosteriorPredictiveHTML:
         )
 
         out = scm.export_html(
-            output_path=tmp_path / "posterior_explorer_causal.html",
+            output_path=tmp_path / "explorer_causal.html",
             observed_ranges={"X": (-1.0, 1.0, 3), "Z": (-1.0, 1.0, 3)},
             baseline_observed={"X": 0.0, "Z": 0.0},
             outcome_name="Y",
@@ -813,7 +813,7 @@ class TestRandomSEM:
 
     def test_random_scm_includes_nonlinear_variables(self) -> None:
         """Ensure nonlinear option creates at least one FunctionalVariable when forced."""
-        from inga.variable.functional import FunctionalVariable
+        from inga.scm.variable.functional import FunctionalVariable
 
         config = RandomSCMConfig(
             num_variables=4,

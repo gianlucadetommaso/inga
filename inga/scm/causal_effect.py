@@ -6,7 +6,7 @@ from functools import partial
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from inga.variable.base import Variable
+    from inga.scm.variable.base import Variable
     from inga.approx_posterior.laplace import LaplacePosterior
 
 

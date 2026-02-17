@@ -10,11 +10,11 @@ from typing import TYPE_CHECKING, Any
 
 import torch
 
-from inga.variable.functional import FunctionalVariable
-from inga.variable.linear import LinearVariable
+from inga.scm.variable.functional import FunctionalVariable
+from inga.scm.variable.linear import LinearVariable
 
 if TYPE_CHECKING:
-    from inga.variable.base import Variable
+    from inga.scm.variable.base import Variable
 
 
 class HTMLMixin:
@@ -23,11 +23,11 @@ class HTMLMixin:
     _variables: dict[str, Variable]
     _validate_causal_query: Any
     draw: Any
-    animate: Any
     posterior_predictive_samples: Any
     _compute_causal_effect_samples: Any
     _compute_causal_bias_samples: Any
     _compute_plot_positions: Any
+    animate_flow_gif: Any
 
     def export_html(
         self,
@@ -38,7 +38,7 @@ class HTMLMixin:
         outcome_name: str | None = None,
         num_posterior_samples: int = 400,
         max_precomputed_states: int = 1200,
-        title: str = "SCM Explorer",
+        title: str = "Dataset Card",
     ) -> Path:
         """Export an interactive HTML explorer with sliders and SCM context."""
         output = Path(output_path)
@@ -152,7 +152,7 @@ class HTMLMixin:
             for treatment_name in causal_treatments:
                 flow_path = asset_dir / f"flow_{treatment_name}_to_{outcome_name}.gif"
                 try:
-                    out_flow = self.animate(
+                    out_flow = self.animate_flow_gif(
                         output_path=flow_path,
                         observed_names=sorted(observed_names),
                         treatment_name=treatment_name,
@@ -382,7 +382,7 @@ class HTMLMixin:
 <head>
   <meta charset=\"utf-8\" />
   <meta name=\"viewport\" content=\"width=device-width,initial-scale=1\" />
-  <title>SCM Explorer</title>
+  <title>Dataset Card</title>
   <script src=\"https://cdn.plot.ly/plotly-2.35.2.min.js\"></script>
   <script>
     window.MathJax = {{
@@ -584,13 +584,11 @@ class HTMLMixin:
 <body>
   <div class=\"container\">
     <div class=\"dag-panel\">
-      <div class=\"dag-title\">DAG structure</div>
       <div id=\"top-schedules\" class=\"top-schedules\"></div>
       <div id=\"dag-view\" class=\"top-view\">
         <img id=\"dag-image\" class=\"dag-image\" alt=\"DAG\" />
       </div>
       <div id=\"scm-view\" class=\"top-view\" style=\"display:none\">
-        <h3 class=\"scm-top-title\">Structural causal model</h3>
         <div id=\"scm\" class=\"scm-card\"></div>
       </div>
     </div>
@@ -617,8 +615,8 @@ class HTMLMixin:
       flow_animations: 'Flow animations',
     }};
     const TOP_GROUP_LABELS = {{
-      dag: 'DAG structure',
-      scm: 'Structural causal model (LaTeX)',
+      dag: 'DAG',
+      scm: 'SCM',
     }};
     const groupOrder = ['variables', 'causal_effects', 'causal_biases', 'flow_animations'];
     const availableGroups = groupOrder.filter((k) => (DATA.plot_groups[k] || []).length > 0);

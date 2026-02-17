@@ -10,7 +10,7 @@ from __future__ import annotations
 import argparse
 
 from inga.scm import SCM
-from inga.variable import Variable
+from inga.scm.variable import Variable
 
 
 def main() -> None:
@@ -41,7 +41,7 @@ def main() -> None:
     outcome_name = "Y"
     observed_names = ["X", "V2", "V4", "V5"]
 
-    output = scm.animate(
+    output = scm.animate_flow_gif(
         output_path=args.output,
         observed_names=observed_names,
         treatment_name=treatment_name,

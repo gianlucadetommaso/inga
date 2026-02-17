@@ -10,7 +10,7 @@ from torch.func import grad
 from dataclasses import dataclass
 from functools import partial
 from typing import Mapping
-from inga.variable.base import Variable
+from inga.scm.variable.base import Variable
 
 
 @dataclass

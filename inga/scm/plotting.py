@@ -85,30 +85,6 @@ class PlottingMixin:
         plt.close(fig)
         return output
 
-    def animate_flow_gif(
-        self,
-        output_path: str | Path,
-        *,
-        observed_names: Iterable[str],
-        treatment_name: str,
-        outcome_name: str,
-        fps: int = 15,
-        frames_per_flow: int = 36,
-        figsize: tuple[float, float] = (9.0, 5.0),
-        title: str | None = None,
-    ) -> Path:
-        """Backward-compatible alias for :meth:`animate`."""
-        return self.animate(
-            output_path=output_path,
-            observed_names=observed_names,
-            treatment_name=treatment_name,
-            outcome_name=outcome_name,
-            fps=fps,
-            frames_per_flow=frames_per_flow,
-            figsize=figsize,
-            title=title,
-        )
-
     def path_flows(
         self,
         *,
@@ -218,7 +194,7 @@ class PlottingMixin:
 
         return fig, ax
 
-    def animate(
+    def animate_flow_gif(
         self,
         output_path: str | Path,
         *,
@@ -227,7 +203,7 @@ class PlottingMixin:
         outcome_name: str,
         fps: int = 15,
         frames_per_flow: int = 36,
-        figsize: tuple[float, float] = (9.0, 5.0),
+        figsize: tuple[float, float] = (9.0, 3.0),
         title: str | None = None,
     ) -> Path:
         observed = set(observed_names)
