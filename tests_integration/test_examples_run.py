@@ -15,7 +15,7 @@ import pytest
             [
                 sys.executable,
                 "-u",
-                "examples/causal_training_benchmark.py",
+                "examples/causal_consistency_benchmark.py",
                 "--num-seeds",
                 "1",
                 "--epochs",
