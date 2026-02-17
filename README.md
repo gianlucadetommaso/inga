@@ -18,22 +18,23 @@ $$
 Here, $\mathrm{Pa}(V_i)$ denotes the set of parents of $V_i$ in the DAG, $\bar{f}_{V_i}$ captures the deterministic structural component, and $\sigma_{V_i}$ controls the scale of the exogenous noise.
 
 In particular, let $X$ denote a treatment variable, $Y$ an outcome, and $\mathcal{O}$ a set of observed variables. Under mild regularity assumptions [(Detommaso et al.)](https://arxiv.org/abs/2106.09762), the causal effect and causal bias for a given treatment value $x$ and observation vector $o$ are defined as
+$$
+\mathcal{C}_X(x, o)
+:= \mathbb{E}\big[\nabla_x f_Y^x \,\big|\, x, o\big]
+$$
 
-```math
-\begin{aligned}
-\mathcal{C}_X(x, o) 
-&:= \mathbb{E}\big[\nabla_x f_Y^x \,\big|\, x, o\big], \\
-\mathcal{B}_X(x, o) 
-&:= -\sum_{V_i \in \{X\}\cup\mathcal{O}}
+$$
+\mathcal{B}_X(x, o)
+:= -\sum_{V_i \in \{X\}\cup\mathcal{O}}
 \frac{1}{\sigma_{V_i}}\mathbb{E}\Big[
 \Big(
-\nabla_{V_i} f_Y^{x,o} - (f_Y^{x,o} - \mathbb{E}[Y \mid x, o])\, U_{V_i}
+\nabla_{V_i} f_Y^{x,o}
+- (f_Y^{x,o} - \mathbb{E}[Y \mid x, o])\, U_{V_i}
 \Big)
 \nabla_x (f_{V_i}^{x,o} - v_i)
 \,\Big|\, x, o
 \Big].
-\end{aligned}
-```
+$$
 
 Here, $f_{V_i}^{a}$ denotes the structural function $f_{V_i}$ under intervention $A=a$. All expectations are taken with respect to the posterior distribution $p(U \mid x, o)$, where $U$ is the vector of all exogenous noise variables.
 
@@ -41,11 +42,11 @@ Here, $f_{V_i}^{a}$ denotes the structural function $f_{V_i}$ under intervention
 
 One can show that the association between treatment $X$ and outcome $Y$ decomposes into causal effect and causal bias:
 
-```math
+$$
 \mathcal{A}_X(x, o)
 := \nabla_x \mathbb{E}[Y \mid x, o]
 = \mathcal{C}_X(x, o) + \mathcal{B}_X(x, o).
-```
+$$
 
 ## Causally Consistent Pre-Training
 
@@ -56,13 +57,17 @@ Standard point-estimation models aim to approximate the conditional expectation 
 
 Consider an encoder model $z := h(o)$ and a prediction head $\hat{y}(z)$. Introduce two additional heads, $\hat{c}_j(z)$ and $\hat{b}_j(z)$, intended to learn the causal effect and causal bias from $O_j$ (treated as the treatment variable) to $Y$. We say that the model is **causally consistent** for $O_j$ if
 
-```math
-\begin{aligned}
-\nabla_{o_j} \hat{y} &= \hat{c}_j + \hat{b}_j, \\
-\hat{c}_j &= \mathcal{C}_{O_j}(o_j, o), \\
-\hat{b}_j &= \mathcal{B}_{O_j}(o_j, o).
-\end{aligned}
-```
+$$
+\nabla_{o_j} \hat{y} = \hat{c}_j + \hat{b}_j
+$$
+
+$$
+\hat{c}_j = \mathcal{C}_{O_j}(o_j, o)
+$$
+
+$$
+\hat{b}_j = \mathcal{B}_{O_j}(o_j, o)
+$$
 
 `inga` enables causally consistent pre-training by generating synthetic datasets that include the full set of causal effects $\mathcal{C}_{O_j}(o_j, o)$ and causal biases $\mathcal{B}_{O_j}(o_j, o)$. These quantities can be incorporated directly into training objectives, encouraging models to learn representations that respect the causal structure of the data-generating process.
 
@@ -221,6 +226,7 @@ If you use `inga` in academic work, you can cite it with the following BibTeX en
   note = {GitHub repository}
 }
 ```
+
 
 
 
