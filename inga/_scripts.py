@@ -7,7 +7,7 @@ import sys
 COMMANDS: dict[str, tuple[list[str], str]] = {
     "fmt": (["ruff", "format", "."], "Format"),
     "lint": (["ruff", "check", "--fix", "."], "Lint fix"),
-    "typecheck": (["mypy", "inga", "tests"], "Type check"),
+    "typecheck": ([sys.executable, "-m", "mypy", "inga", "tests"], "Type check"),
     "test": (
         [sys.executable, "-m", "pytest", "tests", "-v", "-m", "not integration"],
         "Unit tests",

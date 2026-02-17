@@ -27,6 +27,7 @@ class HTMLMixin:
     _compute_causal_effect_samples: Any
     _compute_causal_bias_samples: Any
     _compute_plot_positions: Any
+    animate_flow_gif: Any
 
     def export_html(
         self,
