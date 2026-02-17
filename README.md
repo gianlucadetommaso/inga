@@ -2,8 +2,6 @@
 
 ![Coverage](https://img.shields.io/badge/coverage-91%25-brightgreen)
 
-**Test coverage budget:** keep total coverage at **≥ 85%**.
-
 `inga` is a toolkit for generating and inspecting synthetic tabular datasets. It constructs arbitrarily complex Structural Causal Models (SCMs), draws samples from them, and computes causal effects and causal biases conditioned on observed variables and outcomes. All computed quantities are stored and made available for causally-informed pre-training of tabular models.
 
 ![Flow X to Y](plots/explorer_assets/flow_X_to_Y.gif)
@@ -29,8 +27,7 @@ In particular, let $X$ denote a treatment variable, $Y$ an outcome, and $\mathca
 &:= -\sum_{V_i \in \{X\}\cup\mathcal{O}}
 \frac{1}{\sigma_{V_i}}\mathbb{E}\Big[
 \Big(
-\nabla_{V_i} f_Y^{x,o}
-- (f_Y^{x,o} - \mathbb{E}[Y \mid x, o])\, U_{V_i}
+\nabla_{V_i} f_Y^{x,o} - (f_Y^{x,o} - \mathbb{E}[Y \mid x, o])\, U_{V_i}
 \Big)
 \nabla_x (f_{V_i}^{x,o} - v_i)
 \,\Big|\, x, o
