@@ -83,7 +83,13 @@ The table shows that not only the model trained using causal consistency provide
 ## How To:
 
 ### Install
-Clone the repository:
+Get `inga` from PyPI:
+
+```bash
+pip install inga
+```
+
+Alternatively, clone the repository:
 
 ```bash
 git clone https://github.com/gianlucadetommaso/inga.git
@@ -99,7 +105,7 @@ uv sync
 Run scripts, for example:
 
 ```bash
-uv run python -m examples.explore
+uv run python -m examples/explore.py
 ```
 
 ### Create a DAG
