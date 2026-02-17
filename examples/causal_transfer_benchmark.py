@@ -146,7 +146,7 @@ def main() -> None:
         seed_i = args.seed + i
         ds = generate_scm_dataset(
             SCMDatasetConfig(
-                sem_config=RandomSCMConfig(
+                scm_config=RandomSCMConfig(
                     num_variables=args.num_variables,
                     parent_prob=0.6,
                     nonlinear_prob=0.8,

@@ -186,7 +186,7 @@ def run_seed(
 
     dataset = generate_scm_dataset(
         SCMDatasetConfig(
-            sem_config=RandomSCMConfig(
+            scm_config=RandomSCMConfig(
                 num_variables=6,
                 parent_prob=0.6,
                 nonlinear_prob=0.8,
