@@ -1,4 +1,4 @@
-"""Benchmark causal-aware training on random SEM datasets.
+"""Benchmark causal-aware training on random SCM datasets.
 
 Compares three regimes over multiple random seeds:
 1) standard MLP prediction,
@@ -16,8 +16,8 @@ import torch
 from torch import Tensor, nn
 from torch.utils.data import DataLoader, TensorDataset
 
-from steindag.sem.dataset import SEMDatasetConfig, generate_sem_dataset
-from steindag.sem.random import RandomSEMConfig
+from inga.scm.dataset import SCMDatasetConfig, generate_scm_dataset
+from inga.scm.random import RandomSCMConfig
 
 from examples.utils import extract_observed_bundle, print_table, summary
 
@@ -184,9 +184,9 @@ def run_seed(
 ) -> dict[str, RegimeResult]:
     torch.manual_seed(seed)
 
-    dataset = generate_sem_dataset(
-        SEMDatasetConfig(
-            sem_config=RandomSEMConfig(
+    dataset = generate_scm_dataset(
+        SCMDatasetConfig(
+            scm_config=RandomSCMConfig(
                 num_variables=6,
                 parent_prob=0.6,
                 nonlinear_prob=0.8,

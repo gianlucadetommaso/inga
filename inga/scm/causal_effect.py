@@ -1,4 +1,4 @@
-"""Causal effect computation mixin for Structural Equation Models."""
+"""Causal effect computation mixin for Structural Causal Models."""
 
 from torch import Tensor, vmap, no_grad
 from torch.func import grad
@@ -6,8 +6,8 @@ from functools import partial
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from steindag.variable.base import Variable
-    from steindag.approx_posterior.laplace import LaplacePosterior
+    from inga.variable.base import Variable
+    from inga.approx_posterior.laplace import LaplacePosterior
 
 
 class CausalEffectMixin:
@@ -226,7 +226,7 @@ class CausalEffectMixin:
             The mean function value of the outcome variable.
 
         Raises:
-            ValueError: If outcome variable is not found in the SEM.
+            ValueError: If outcome variable is not found in the SCM.
         """
         values: dict[str, Tensor] = {}
 
@@ -255,7 +255,7 @@ class CausalEffectMixin:
             else:
                 values[name] = variable.f(parents, latent[name])
 
-        raise ValueError(f"Outcome variable '{outcome_name}' not found in the SEM.")
+        raise ValueError(f"Outcome variable '{outcome_name}' not found in the SCM.")
 
     def _is_on_causal_path(
         self,
@@ -279,11 +279,11 @@ class CausalEffectMixin:
             False otherwise. Returns False if variable_name equals treatment_name.
 
         Raises:
-            ValueError: If any of the variable names are not in the SEM.
+            ValueError: If any of the variable names are not in the SCM.
         """
         for name in [variable_name, treatment_name, outcome_name]:
             if name not in self._variables:
-                raise ValueError(f"Variable '{name}' not found in the SEM.")
+                raise ValueError(f"Variable '{name}' not found in the SCM.")
 
         if variable_name == treatment_name:
             return False

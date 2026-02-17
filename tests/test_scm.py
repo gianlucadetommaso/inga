@@ -1,15 +1,15 @@
-"""Tests for the SEM class."""
+"""Tests for the SCM class."""
 
 import matplotlib
 import torch
 import pytest
-from steindag.variable.base import Variable
-from steindag.variable.linear import LinearVariable
-from steindag.sem.base import SEM
-from steindag.sem.random import (
-    RandomSEMConfig,
+from inga.variable.base import Variable
+from inga.variable.linear import LinearVariable
+from inga.scm.base import SCM
+from inga.scm.random import (
+    RandomSCMConfig,
     _build_f_mean,
-    random_sem,
+    random_scm,
     resolve_transforms,
 )
 
@@ -17,9 +17,9 @@ matplotlib.use("Agg")
 
 
 @pytest.fixture
-def simple_sem() -> SEM:
-    """Create a simple SEM with Z -> X structure."""
-    return SEM(
+def simple_sem() -> SCM:
+    """Create a simple SCM with Z -> X structure."""
+    return SCM(
         variables=[
             LinearVariable(
                 name="Z", parent_names=[], sigma=1.0, coefs={}, intercept=0.0
@@ -32,9 +32,9 @@ def simple_sem() -> SEM:
 
 
 @pytest.fixture
-def chain_sem() -> SEM:
-    """Create a chain SEM: Z -> X -> Y."""
-    return SEM(
+def chain_sem() -> SCM:
+    """Create a chain SCM: Z -> X -> Y."""
+    return SCM(
         variables=[
             LinearVariable(
                 name="Z", parent_names=[], sigma=1.0, coefs={}, intercept=0.0
@@ -50,9 +50,9 @@ def chain_sem() -> SEM:
 
 
 @pytest.fixture
-def collider_sem() -> SEM:
-    """Create a collider SEM: Z -> Y <- X."""
-    return SEM(
+def collider_sem() -> SCM:
+    """Create a collider SCM: Z -> Y <- X."""
+    return SCM(
         variables=[
             LinearVariable(
                 name="Z", parent_names=[], sigma=1.0, coefs={}, intercept=0.0
@@ -72,21 +72,21 @@ def collider_sem() -> SEM:
 
 
 class TestSEMInit:
-    """Tests for SEM initialization."""
+    """Tests for SCM initialization."""
 
-    def test_init_stores_variables(self, simple_sem: SEM) -> None:
+    def test_init_stores_variables(self, simple_sem: SCM) -> None:
         """Test that __init__ correctly stores variables by name."""
         assert "Z" in simple_sem._variables
         assert "X" in simple_sem._variables
         assert len(simple_sem._variables) == 2
 
-    def test_init_creates_posterior(self, simple_sem: SEM) -> None:
+    def test_init_creates_posterior(self, simple_sem: SCM) -> None:
         """Test that __init__ creates a LaplacePosterior."""
         assert simple_sem.posterior is not None
 
     def test_init_passes_posterior_kwargs(self) -> None:
-        """Test that SEM forwards posterior configuration to LaplacePosterior."""
-        sem = SEM(
+        """Test that SCM forwards posterior configuration to LaplacePosterior."""
+        scm = SCM(
             variables=[
                 LinearVariable(
                     name="Z", parent_names=[], sigma=1.0, coefs={}, intercept=0.0
@@ -106,26 +106,26 @@ class TestSEMInit:
             },
         )
 
-        assert sem.posterior._num_map_restarts == 4
-        assert sem.posterior._num_mixture_components == 2
-        assert sem.posterior._adam_lr == 1e-2
+        assert scm.posterior._num_map_restarts == 4
+        assert scm.posterior._num_mixture_components == 2
+        assert scm.posterior._adam_lr == 1e-2
 
     def test_init_accepts_parent_only_variables_without_sigma(self) -> None:
-        """SEM should accept DAG-only variable declarations."""
-        sem = SEM(
+        """SCM should accept DAG-only variable declarations."""
+        scm = SCM(
             variables=[
                 Variable(name="Z"),
                 Variable(name="X", parent_names=["Z"]),
             ]
         )
 
-        assert set(sem._variables.keys()) == {"Z", "X"}
+        assert set(scm._variables.keys()) == {"Z", "X"}
 
 
 class TestSEMGenerate:
-    """Tests for SEM.generate method."""
+    """Tests for SCM.generate method."""
 
-    def test_generate_returns_all_variables(self, simple_sem: SEM) -> None:
+    def test_generate_returns_all_variables(self, simple_sem: SCM) -> None:
         """Test that generate returns values for all variables."""
         torch.manual_seed(42)
         values = simple_sem.generate(10)
@@ -134,7 +134,7 @@ class TestSEMGenerate:
         assert "X" in values
         assert len(values) == 2
 
-    def test_generate_correct_shape(self, simple_sem: SEM) -> None:
+    def test_generate_correct_shape(self, simple_sem: SCM) -> None:
         """Test that generated values have correct shape."""
         torch.manual_seed(42)
         values = simple_sem.generate(100)
@@ -142,7 +142,7 @@ class TestSEMGenerate:
         assert values["Z"].shape == (100,)
         assert values["X"].shape == (100,)
 
-    def test_generate_respects_causal_structure(self, chain_sem: SEM) -> None:
+    def test_generate_respects_causal_structure(self, chain_sem: SCM) -> None:
         """Test that generate respects the causal structure."""
         torch.manual_seed(42)
         values = chain_sem.generate(1000)
@@ -152,7 +152,7 @@ class TestSEMGenerate:
         corr = torch.corrcoef(torch.stack([values["X"], values["Y"]]))[0, 1]
         assert corr > 0.5
 
-    def test_generate_reproducible_with_seed(self, simple_sem: SEM) -> None:
+    def test_generate_reproducible_with_seed(self, simple_sem: SCM) -> None:
         """Test that generate is reproducible with the same seed."""
         torch.manual_seed(42)
         values1 = simple_sem.generate(10)
@@ -163,7 +163,7 @@ class TestSEMGenerate:
         assert torch.allclose(values1["Z"], values2["Z"])
         assert torch.allclose(values1["X"], values2["X"])
 
-    def test_generate_collider_structure(self, collider_sem: SEM) -> None:
+    def test_generate_collider_structure(self, collider_sem: SCM) -> None:
         """Test generate with collider structure (independent causes)."""
         torch.manual_seed(42)
         values = collider_sem.generate(1000)
@@ -172,7 +172,7 @@ class TestSEMGenerate:
         corr = torch.corrcoef(torch.stack([values["Z"], values["X"]]))[0, 1]
         assert abs(corr) < 0.1
 
-    def test_generate_single_sample(self, simple_sem: SEM) -> None:
+    def test_generate_single_sample(self, simple_sem: SCM) -> None:
         """Test generate with a single sample."""
         torch.manual_seed(42)
         values = simple_sem.generate(1)
@@ -182,9 +182,9 @@ class TestSEMGenerate:
 
 
 class TestSEMPosterior:
-    """Tests for SEM posterior inference."""
+    """Tests for SCM posterior inference."""
 
-    def test_posterior_fit_and_sample(self, simple_sem: SEM) -> None:
+    def test_posterior_fit_and_sample(self, simple_sem: SCM) -> None:
         """Test that posterior.fit and posterior.sample work."""
         torch.manual_seed(42)
         values = simple_sem.generate(10)
@@ -198,10 +198,10 @@ class TestSEMPosterior:
         assert "Z" in samples
         assert samples["Z"].shape == (10, 100)
 
-    def test_posterior_sample_requires_fit(self, simple_sem: SEM) -> None:
+    def test_posterior_sample_requires_fit(self, simple_sem: SCM) -> None:
         """Test that sample raises error if fit not called."""
-        # Create a fresh SEM to ensure no state
-        sem = SEM(
+        # Create a fresh SCM to ensure no state
+        scm = SCM(
             variables=[
                 LinearVariable(
                     name="Z", parent_names=[], sigma=1.0, coefs={}, intercept=0.0
@@ -210,14 +210,14 @@ class TestSEMPosterior:
         )
 
         with pytest.raises(ValueError, match="fit"):
-            sem.posterior.sample(10)
+            scm.posterior.sample(10)
 
 
 class TestSEMPosteriorPredictiveHTML:
     """Tests for posterior predictive sampling and HTML export."""
 
     def test_posterior_predictive_samples_returns_all_variables(
-        self, chain_sem: SEM
+        self, chain_sem: SCM
     ) -> None:
         """Posterior predictive should contain observed and latent variables."""
         torch.manual_seed(0)
@@ -236,7 +236,7 @@ class TestSEMPosteriorPredictiveHTML:
 
     def test_export_html_creates_html(self, tmp_path) -> None:
         """HTML export should write a valid self-contained HTML file."""
-        sem = SEM(
+        scm = SCM(
             variables=[
                 LinearVariable(
                     name="Z", parent_names=[], sigma=1.0, coefs={}, intercept=0.0
@@ -251,7 +251,7 @@ class TestSEMPosteriorPredictiveHTML:
             ]
         )
 
-        out = sem.export_html(
+        out = scm.export_html(
             output_path=tmp_path / "posterior_explorer.html",
             observed_ranges={"X": (-1.0, 1.0, 3)},
             baseline_observed={"X": 0.0},
@@ -262,7 +262,7 @@ class TestSEMPosteriorPredictiveHTML:
         assert out.exists()
         html = out.read_text(encoding="utf-8")
         assert "Plotly.react" in html
-        assert "SteinDAG Explorer" in html
+        assert "SCM Explorer" in html
         assert "slider_names" in html
         assert (
             "const nbins = Math.max(15, Math.round(Math.sqrt(samples.length || 1)));"
@@ -273,7 +273,7 @@ class TestSEMPosteriorPredictiveHTML:
 
     def test_export_html_rejects_oversized_grid(self) -> None:
         """Cross-product precomputation cap should be enforced."""
-        sem = SEM(
+        scm = SCM(
             variables=[
                 LinearVariable(
                     name="Z", parent_names=[], sigma=1.0, coefs={}, intercept=0.0
@@ -296,7 +296,7 @@ class TestSEMPosteriorPredictiveHTML:
         )
 
         with pytest.raises(ValueError, match="Cross-product grid too large"):
-            sem.export_html(
+            scm.export_html(
                 output_path="plots/posterior_explorer_too_large.html",
                 observed_ranges={
                     "X": (-1.0, 1.0, 7),
@@ -308,7 +308,7 @@ class TestSEMPosteriorPredictiveHTML:
 
     def test_export_html_includes_causal_effect_distributions(self, tmp_path) -> None:
         """Explorer should include causal-effect plots for all observed treatments."""
-        sem = SEM(
+        scm = SCM(
             variables=[
                 LinearVariable(
                     name="Z", parent_names=[], sigma=1.0, coefs={}, intercept=0.0
@@ -330,7 +330,7 @@ class TestSEMPosteriorPredictiveHTML:
             ]
         )
 
-        out = sem.export_html(
+        out = scm.export_html(
             output_path=tmp_path / "posterior_explorer_causal.html",
             observed_ranges={"X": (-1.0, 1.0, 3), "Z": (-1.0, 1.0, 3)},
             baseline_observed={"X": 0.0, "Z": 0.0},
@@ -345,11 +345,11 @@ class TestSEMPosteriorPredictiveHTML:
 
 
 class TestSEMDraw:
-    """Tests for SEM.draw visualization."""
+    """Tests for SCM.draw visualization."""
 
     def test_draw_creates_png_file(self, tmp_path) -> None:
         """Draw API should render and save a PNG file."""
-        sem = SEM(
+        scm = SCM(
             variables=[
                 Variable(name="V1"),
                 Variable(name="X", parent_names=["V1"]),
@@ -357,7 +357,7 @@ class TestSEMDraw:
             ]
         )
 
-        out = sem.draw(
+        out = scm.draw(
             output_path=tmp_path / "dag.png",
             observed_names=["X"],
             title="DAG",
@@ -369,7 +369,7 @@ class TestSEMDraw:
 
     def test_draw_rejects_unknown_observed_variable(self) -> None:
         """Unknown observed names should raise ValueError in draw."""
-        sem = SEM(
+        scm = SCM(
             variables=[
                 Variable(name="V1"),
                 Variable(name="X", parent_names=["V1"]),
@@ -377,13 +377,13 @@ class TestSEMDraw:
         )
 
         with pytest.raises(ValueError, match="Unknown observed variable"):
-            sem.draw(output_path="plots/test_draw.png", observed_names=["NOPE"])
+            scm.draw(output_path="plots/test_draw.png", observed_names=["NOPE"])
 
 
 class TestSEMPlotDAG:
-    """Tests for SEM.plot_dag visualization."""
+    """Tests for SCM.plot_dag visualization."""
 
-    def test_plot_dag_labels_and_shading(self, chain_sem: SEM) -> None:
+    def test_plot_dag_labels_and_shading(self, chain_sem: SCM) -> None:
         """Node labels should be present and observed nodes should be shaded."""
         _, ax = chain_sem.plot_dag(observed_names=["X"])
 
@@ -408,14 +408,14 @@ class TestSEMPlotDAG:
         assert observed_facecolor == pytest.approx((0.741, 0.741, 0.741), abs=0.02)
         assert unobserved_facecolor == pytest.approx((1.0, 1.0, 1.0), abs=0.01)
 
-    def test_plot_dag_rejects_unknown_observed_variable(self, simple_sem: SEM) -> None:
+    def test_plot_dag_rejects_unknown_observed_variable(self, simple_sem: SCM) -> None:
         """Unknown observed names should raise a ValueError."""
         with pytest.raises(ValueError, match="Unknown observed variable"):
             simple_sem.plot_dag(observed_names=["NOT_IN_SEM"])
 
     def test_plot_dag_highlights_path_categories(self) -> None:
         """Path categories should be color-coded for treatment/outcome queries."""
-        sem = SEM(
+        scm = SCM(
             variables=[
                 LinearVariable(
                     "U", sigma=1.0, parent_names=[], coefs={}, intercept=0.0
@@ -439,7 +439,7 @@ class TestSEMPlotDAG:
             ]
         )
 
-        _, ax = sem.plot_dag(
+        _, ax = scm.plot_dag(
             observed_names=["T", "B"],
             treatment_name="T",
             outcome_name="Y",
@@ -481,7 +481,7 @@ class TestSEMPlotDAG:
 
     def test_plot_dag_supports_multiple_edge_categories(self) -> None:
         """An edge can carry multiple path categories and should be duplicated."""
-        sem = SEM(
+        scm = SCM(
             variables=[
                 LinearVariable(
                     "U", sigma=1.0, parent_names=[], coefs={}, intercept=0.0
@@ -506,7 +506,7 @@ class TestSEMPlotDAG:
             ]
         )
 
-        _, ax = sem.plot_dag(
+        _, ax = scm.plot_dag(
             observed_names=["T", "M"],
             treatment_name="T",
             outcome_name="Y",
@@ -525,7 +525,7 @@ class TestSEMPlotDAG:
         }
         assert categories_t_to_m == {"blocked_causal", "open_noncausal"}
 
-    def test_plot_dag_requires_treatment_observed(self, simple_sem: SEM) -> None:
+    def test_plot_dag_requires_treatment_observed(self, simple_sem: SCM) -> None:
         """Treatment must be included in observed_names when provided."""
         with pytest.raises(ValueError, match="treatment_name"):
             simple_sem.plot_dag(
@@ -534,7 +534,7 @@ class TestSEMPlotDAG:
                 outcome_name="Z",
             )
 
-    def test_plot_dag_requires_outcome_unobserved(self, simple_sem: SEM) -> None:
+    def test_plot_dag_requires_outcome_unobserved(self, simple_sem: SCM) -> None:
         """Outcome cannot be included in observed_names when provided."""
         with pytest.raises(ValueError, match="outcome_name"):
             simple_sem.plot_dag(
@@ -545,7 +545,7 @@ class TestSEMPlotDAG:
 
     def test_path_flows_do_not_add_non_simple_collider_descendant_walks(self) -> None:
         """Collider-descendant motifs should not create non-simple repeated-node paths."""
-        sem = SEM(
+        scm = SCM(
             variables=[
                 LinearVariable(
                     "T", sigma=1.0, parent_names=[], coefs={}, intercept=0.0
@@ -570,7 +570,7 @@ class TestSEMPlotDAG:
             ]
         )
 
-        flows = sem.path_flows(
+        flows = scm.path_flows(
             treatment_name="T",
             outcome_name="Y",
             observed_names=["T", "D"],
@@ -580,17 +580,17 @@ class TestSEMPlotDAG:
 
     def test_path_flows_exclude_repeated_node_detours(self) -> None:
         """Synthetic detours must remain simple paths (no repeated nodes)."""
-        from steindag.sem.random import RandomSEMConfig, random_sem
+        from inga.scm.random import RandomSCMConfig, random_scm
 
-        sem = random_sem(
-            RandomSEMConfig(
+        scm = random_scm(
+            RandomSCMConfig(
                 num_variables=6,
                 parent_prob=0.6,
                 nonlinear_prob=0.6,
                 seed=11,
             )
         )
-        flows = sem.path_flows(
+        flows = scm.path_flows(
             treatment_name="X1",
             outcome_name="X4",
             observed_names=["X1", "X3", "X5"],
@@ -601,7 +601,7 @@ class TestSEMPlotDAG:
 
     def test_animate_flow_gif_creates_file(self, tmp_path) -> None:
         """Core GIF animation API should render successfully."""
-        sem = SEM(
+        scm = SCM(
             variables=[
                 LinearVariable(
                     "X0", sigma=1.0, parent_names=[], coefs={}, intercept=0.0
@@ -623,7 +623,7 @@ class TestSEMPlotDAG:
             ]
         )
 
-        out = sem.animate_flow_gif(
+        out = scm.animate_flow_gif(
             output_path=tmp_path / "flow.gif",
             observed_names=["X1"],
             treatment_name="X1",
@@ -638,7 +638,7 @@ class TestSEMPlotDAG:
 
     def test_flow_animation_stages_include_directed_causal_first(self) -> None:
         """Staged animation should begin with directed causal flow stage."""
-        sem = SEM(
+        scm = SCM(
             variables=[
                 LinearVariable(
                     "X0", sigma=1.0, parent_names=[], coefs={}, intercept=0.0
@@ -660,7 +660,7 @@ class TestSEMPlotDAG:
             ]
         )
 
-        stages = sem.flow_animation_stages(
+        stages = scm.flow_animation_stages(
             treatment_name="X1",
             outcome_name="X2",
             observed_names=["X1"],
@@ -671,7 +671,7 @@ class TestSEMPlotDAG:
 
     def test_flow_animation_stages_include_confounder_bias(self) -> None:
         """Latent confounders should produce red confounder-bias stages."""
-        sem = SEM(
+        scm = SCM(
             variables=[
                 LinearVariable(
                     "U", sigma=1.0, parent_names=[], coefs={}, intercept=0.0
@@ -689,7 +689,7 @@ class TestSEMPlotDAG:
             ]
         )
 
-        stages = sem.flow_animation_stages(
+        stages = scm.flow_animation_stages(
             treatment_name="T",
             outcome_name="Y",
             observed_names=["T"],
@@ -706,7 +706,7 @@ class TestSEMPlotDAG:
         self,
     ) -> None:
         """Observed mediators should be labeled as mediator bias, not selection bias."""
-        sem = SEM(
+        scm = SCM(
             variables=[
                 LinearVariable(
                     "V1", sigma=1.0, parent_names=[], coefs={}, intercept=0.0
@@ -749,7 +749,7 @@ class TestSEMPlotDAG:
             ]
         )
 
-        stages = sem.flow_animation_stages(
+        stages = scm.flow_animation_stages(
             treatment_name="X",
             outcome_name="Y",
             observed_names=["X", "V2", "V4"],
@@ -777,23 +777,23 @@ class TestSEMPlotDAG:
 
 
 class TestRandomSEM:
-    """Tests for random SEM generation."""
+    """Tests for random SCM generation."""
 
-    def test_random_sem_generates_dag(self) -> None:
-        """Ensure random SEM respects DAG ordering."""
-        config = RandomSEMConfig(num_variables=6, parent_prob=0.6, seed=123)
-        sem = random_sem(config)
-        assert len(sem._variables) == 6
+    def test_random_scm_generates_dag(self) -> None:
+        """Ensure random SCM respects DAG ordering."""
+        config = RandomSCMConfig(num_variables=6, parent_prob=0.6, seed=123)
+        scm = random_scm(config)
+        assert len(scm._variables) == 6
 
-        for idx, (name, variable) in enumerate(sem._variables.items()):
+        for idx, (name, variable) in enumerate(scm._variables.items()):
             allowed_parents = {f"X{i}" for i in range(idx)}
             assert set(variable.parent_names).issubset(allowed_parents)
 
-    def test_random_sem_reproducible(self) -> None:
-        """Ensure the random SEM is reproducible with a seed."""
-        config = RandomSEMConfig(num_variables=4, parent_prob=0.5, seed=99)
-        sem1 = random_sem(config)
-        sem2 = random_sem(config)
+    def test_random_scm_reproducible(self) -> None:
+        """Ensure the random SCM is reproducible with a seed."""
+        config = RandomSCMConfig(num_variables=4, parent_prob=0.5, seed=99)
+        sem1 = random_scm(config)
+        sem2 = random_scm(config)
 
         for (name1, var1), (name2, var2) in zip(
             sem1._variables.items(), sem2._variables.items()
@@ -801,29 +801,29 @@ class TestRandomSEM:
             assert name1 == name2
             assert var1.parent_names == var2.parent_names
 
-    def test_random_sem_rejects_invalid_prob(self) -> None:
+    def test_random_scm_rejects_invalid_prob(self) -> None:
         """Ensure invalid parent probabilities raise errors."""
         with pytest.raises(ValueError, match="parent_prob"):
-            random_sem(RandomSEMConfig(num_variables=3, parent_prob=1.5))
+            random_scm(RandomSCMConfig(num_variables=3, parent_prob=1.5))
 
-    def test_random_sem_rejects_non_positive_size(self) -> None:
+    def test_random_scm_rejects_non_positive_size(self) -> None:
         """Ensure invalid num_variables raises errors."""
         with pytest.raises(ValueError, match="num_variables"):
-            random_sem(RandomSEMConfig(num_variables=0))
+            random_scm(RandomSCMConfig(num_variables=0))
 
-    def test_random_sem_includes_nonlinear_variables(self) -> None:
+    def test_random_scm_includes_nonlinear_variables(self) -> None:
         """Ensure nonlinear option creates at least one FunctionalVariable when forced."""
-        from steindag.variable.functional import FunctionalVariable
+        from inga.variable.functional import FunctionalVariable
 
-        config = RandomSEMConfig(
+        config = RandomSCMConfig(
             num_variables=4,
             parent_prob=0.7,
             nonlinear_prob=1.0,
             seed=7,
         )
-        sem = random_sem(config)
+        scm = random_scm(config)
         assert any(
-            isinstance(var, FunctionalVariable) for var in sem._variables.values()
+            isinstance(var, FunctionalVariable) for var in scm._variables.values()
         )
 
     def test_build_f_mean_normalizes_linear_predictor_gradient(self) -> None:
@@ -847,10 +847,10 @@ class TestRandomSEM:
         assert torch.allclose(da, torch.tensor(3.0 / (26.0**0.5)), atol=1e-6)
         assert torch.allclose(db, torch.tensor(4.0 / (26.0**0.5)), atol=1e-6)
 
-    def test_random_sem_seed22_generate_is_finite_regression(self) -> None:
-        """Regression: seed-22 random SEM generation should not emit NaN/Inf."""
-        sem = random_sem(
-            RandomSEMConfig(
+    def test_random_scm_seed22_generate_is_finite_regression(self) -> None:
+        """Regression: seed-22 random SCM generation should not emit NaN/Inf."""
+        scm = random_scm(
+            RandomSCMConfig(
                 num_variables=6,
                 parent_prob=0.6,
                 nonlinear_prob=0.8,
@@ -860,7 +860,7 @@ class TestRandomSEM:
                 seed=22,
             )
         )
-        data = sem.generate(768)
+        data = scm.generate(768)
         for values in data.values():
             assert torch.isfinite(values).all()
 

@@ -4,12 +4,12 @@ import torch
 from torch import Tensor
 import pytest
 from typing import Mapping
-from steindag.variable.base import Variable
-from steindag.variable.linear import LinearVariable
-from steindag.variable.functional import FunctionalVariable
-from steindag.approx_posterior.laplace import LaplacePosterior, LaplacePosteriorState
-from steindag.sem.base import SEM
-from steindag.sem.random import RandomSEMConfig, random_sem, resolve_transforms
+from inga.variable.base import Variable
+from inga.variable.linear import LinearVariable
+from inga.variable.functional import FunctionalVariable
+from inga.approx_posterior.laplace import LaplacePosterior, LaplacePosteriorState
+from inga.scm.base import SCM
+from inga.scm.random import RandomSCMConfig, random_scm, resolve_transforms
 
 
 @pytest.fixture
@@ -335,7 +335,7 @@ class TestLaplacePosteriorSample:
     def test_sample_with_no_latent_variables_returns_empty_dict(
         self, posterior: LaplacePosterior, observed_xy: dict[str, Tensor]
     ) -> None:
-        """Test sampling behavior when all SEM variables are observed."""
+        """Test sampling behavior when all SCM variables are observed."""
         observed_all = {
             "Z": torch.randn_like(observed_xy["X"]),
             "X": observed_xy["X"],
@@ -543,8 +543,8 @@ class TestLaplacePosteriorNonlinearRobustness:
     def test_nonlinear_exponential_model_fit_and_sample_are_numerically_stable(
         self,
     ) -> None:
-        """Test a handcrafted nonlinear SEM with exp transforms for stability."""
-        sem = SEM(
+        """Test a handcrafted nonlinear SCM with exp transforms for stability."""
+        scm = SCM(
             variables=[
                 FunctionalVariable(
                     name="Z",
@@ -573,17 +573,17 @@ class TestLaplacePosteriorNonlinearRobustness:
             ]
         )
 
-        sem.posterior._num_map_restarts = 4
-        sem.posterior._num_mixture_components = 2
-        sem.posterior._continuation_scales = (4.0, 2.0, 1.0)
-        sem.posterior._continuation_steps = 25
+        scm.posterior._num_map_restarts = 4
+        scm.posterior._num_mixture_components = 2
+        scm.posterior._continuation_scales = (4.0, 2.0, 1.0)
+        scm.posterior._continuation_steps = 25
 
         torch.manual_seed(7)
-        values = sem.generate(40)
+        values = scm.generate(40)
         observed = {"X": values["X"], "V": values["V"]}
 
-        sem.posterior.fit(observed)
-        state = sem.posterior.state
+        scm.posterior.fit(observed)
+        state = scm.posterior.state
         assert state is not None
 
         self._assert_finite_and_bounded(state.MAP_components_rav)
@@ -591,7 +591,7 @@ class TestLaplacePosteriorNonlinearRobustness:
         self._assert_finite_and_bounded(state.component_log_weights, bound=100.0)
 
         torch.manual_seed(11)
-        samples = sem.posterior.sample(200)
+        samples = scm.posterior.sample(200)
         for sample in samples.values():
             self._assert_finite_and_bounded(sample)
 
@@ -600,8 +600,8 @@ class TestLaplacePosteriorNonlinearRobustness:
         seeds = [0, 1, 2]
 
         for seed in seeds:
-            sem = random_sem(
-                RandomSEMConfig(
+            scm = random_scm(
+                RandomSCMConfig(
                     num_variables=6,
                     parent_prob=0.65,
                     nonlinear_prob=1.0,
@@ -611,20 +611,20 @@ class TestLaplacePosteriorNonlinearRobustness:
                     seed=seed,
                 )
             )
-            sem.posterior._num_map_restarts = 4
-            sem.posterior._num_mixture_components = 2
-            sem.posterior._continuation_scales = (3.0, 1.5, 1.0)
-            sem.posterior._continuation_steps = 20
+            scm.posterior._num_map_restarts = 4
+            scm.posterior._num_mixture_components = 2
+            scm.posterior._continuation_scales = (3.0, 1.5, 1.0)
+            scm.posterior._continuation_steps = 20
 
             torch.manual_seed(100 + seed)
-            values = sem.generate(32)
+            values = scm.generate(32)
 
-            names = list(sem._variables.keys())
+            names = list(scm._variables.keys())
             observed_names = names[-2:]
             observed = {name: values[name] for name in observed_names}
 
-            sem.posterior.fit(observed)
-            state = sem.posterior.state
+            scm.posterior.fit(observed)
+            state = scm.posterior.state
             assert state is not None
 
             self._assert_finite_and_bounded(state.MAP_components_rav)
@@ -632,7 +632,7 @@ class TestLaplacePosteriorNonlinearRobustness:
             self._assert_finite_and_bounded(state.component_log_weights, bound=100.0)
 
             torch.manual_seed(200 + seed)
-            samples = sem.posterior.sample(128)
+            samples = scm.posterior.sample(128)
             for sample in samples.values():
                 self._assert_finite_and_bounded(sample)
 
@@ -666,7 +666,7 @@ class TestLaplacePosteriorNonlinearRobustness:
                 value = 0.5 * value
             return value
 
-        sem = SEM(
+        scm = SCM(
             variables=[
                 FunctionalVariable(
                     name="Z",
@@ -689,24 +689,24 @@ class TestLaplacePosteriorNonlinearRobustness:
             ]
         )
 
-        sem.posterior._num_map_restarts = 3
-        sem.posterior._num_mixture_components = 2
-        sem.posterior._continuation_scales = (3.0, 1.5, 1.0)
-        sem.posterior._continuation_steps = 18
+        scm.posterior._num_map_restarts = 3
+        scm.posterior._num_mixture_components = 2
+        scm.posterior._continuation_scales = (3.0, 1.5, 1.0)
+        scm.posterior._continuation_steps = 18
 
         torch.manual_seed(321)
-        values = sem.generate(32)
+        values = scm.generate(32)
         observed = {"X": values["X"], "Y": values["Y"]}
 
-        sem.posterior.fit(observed)
-        state = sem.posterior.state
+        scm.posterior.fit(observed)
+        state = scm.posterior.state
         assert state is not None
         self._assert_finite_and_bounded(state.MAP_components_rav)
         self._assert_finite_and_bounded(state.L_cov_components_rav)
         self._assert_finite_and_bounded(state.component_log_weights, bound=100.0)
 
         torch.manual_seed(322)
-        samples = sem.posterior.sample(64)
+        samples = scm.posterior.sample(64)
         assert "Z" in samples
         self._assert_finite_and_bounded(samples["Z"])
 

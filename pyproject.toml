@@ -1,5 +1,5 @@
 [project]
-name = "steindag"
+name = "inga"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
@@ -18,7 +18,7 @@ dev = [
 ]
 
 [project.scripts]
-dev = "steindag._scripts:dev"
+dev = "inga._scripts:dev"
 
 [build-system]
 requires = ["hatchling"]

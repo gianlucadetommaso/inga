@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import argparse
 
-from steindag.sem import SEM
-from steindag.variable import LinearVariable
+from inga.scm import SCM
+from inga.variable import LinearVariable
 
 
 def main() -> None:
@@ -29,7 +29,7 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    sem = SEM(
+    scm = SCM(
         variables=[
             LinearVariable(
                 name="Z1", parent_names=[], sigma=1.0, coefs={}, intercept=0.0
@@ -74,7 +74,7 @@ def main() -> None:
         },
     )
 
-    output = sem.export_html(
+    output = scm.export_html(
         output_path=args.output,
         observed_ranges={
             "X": (-2.0, 2.0, 5),

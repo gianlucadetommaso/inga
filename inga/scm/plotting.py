@@ -1,4 +1,4 @@
-"""Plotting and flow-animation mixin for Structural Equation Models."""
+"""Plotting and flow-animation mixin for Structural Causal Models."""
 
 from __future__ import annotations
 

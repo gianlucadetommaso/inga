@@ -1,9 +1,9 @@
-"""Linear variable implementation for structural equation models."""
+"""Linear variable implementation for structural causal models."""
 
 import torch
 from torch import Tensor
 from typing import Iterable
-from steindag.variable.base import Variable
+from inga.variable.base import Variable
 
 
 class LinearVariable(Variable):

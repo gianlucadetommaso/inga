@@ -1,19 +1,19 @@
-"""Structural Equation Model implementation."""
+"""Structural Causal Model implementation."""
 
 from __future__ import annotations
 
 import torch
 from torch import Tensor
 
-from steindag.approx_posterior.laplace import LaplacePosterior
-from steindag.sem.causal_bias import CausalBiasMixin
-from steindag.sem.html import HTMLMixin
-from steindag.sem.plotting import PlottingMixin
-from steindag.variable.base import Variable
+from inga.approx_posterior.laplace import LaplacePosterior
+from inga.scm.causal_bias import CausalBiasMixin
+from inga.scm.html import HTMLMixin
+from inga.scm.plotting import PlottingMixin
+from inga.variable.base import Variable
 
 
-class SEM(HTMLMixin, PlottingMixin, CausalBiasMixin):
-    """A Structural Equation Model (SEM)."""
+class SCM(HTMLMixin, PlottingMixin, CausalBiasMixin):
+    """A Structural Causal Model (SCM)."""
 
     def __init__(
         self,
@@ -27,7 +27,7 @@ class SEM(HTMLMixin, PlottingMixin, CausalBiasMixin):
         )
 
     def generate(self, num_samples: int) -> dict[str, Tensor]:
-        """Generate samples from the SEM by forward sampling."""
+        """Generate samples from the SCM by forward sampling."""
         values: dict[str, Tensor] = {}
         for name, variable in self._variables.items():
             parents = {
@@ -43,7 +43,7 @@ class SEM(HTMLMixin, PlottingMixin, CausalBiasMixin):
         observed: dict[str, Tensor],
         num_samples: int = 1000,
     ) -> dict[str, Tensor]:
-        """Sample all SEM variables from the Laplace posterior predictive.
+        """Sample all SCM variables from the Laplace posterior predictive.
 
         Args:
             observed: Mapping of observed variable names to tensors of shape

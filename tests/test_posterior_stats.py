@@ -1,8 +1,8 @@
-"""Tests for posterior statistics of the SEM.
+"""Tests for posterior statistics of the SCM.
 
 These tests verify that the Laplace approximate posterior inference produces
 correct mean and variance estimates by comparing against analytically
-derived ground truth for a simple linear SEM.
+derived ground truth for a simple linear SCM.
 """
 
 import torch
@@ -10,18 +10,18 @@ from torch import Tensor
 from torch.func import grad
 from functools import partial
 import pytest
-from steindag.variable.linear import LinearVariable
-from steindag.sem.base import SEM
+from inga.variable.linear import LinearVariable
+from inga.scm.base import SCM
 
 
 @pytest.fixture
-def sem() -> SEM:
-    """Create a test SEM with structure Z -> X, Z -> Y, X -> Y.
+def scm() -> SCM:
+    """Create a test SCM with structure Z -> X, Z -> Y, X -> Y.
 
     Returns:
-        A SEM with three linear variables and unit noise.
+        A SCM with three linear variables and unit noise.
     """
-    return SEM(
+    return SCM(
         variables=[
             LinearVariable(
                 name="Z", parent_names=[], sigma=1.0, coefs={}, intercept=0.0
@@ -41,24 +41,24 @@ def sem() -> SEM:
 
 
 @pytest.fixture
-def values(sem: SEM) -> dict[str, Tensor]:
-    """Generate sample values from the SEM.
+def values(scm: SCM) -> dict[str, Tensor]:
+    """Generate sample values from the SCM.
 
     Args:
-        sem: The structural equation model.
+        scm: The structural causal model.
 
     Returns:
         Dictionary of generated values for all variables.
     """
     torch.manual_seed(42)
-    return sem.generate(10)
+    return scm.generate(10)
 
 
-def _get_coef(sem: SEM, var_name: str, parent_name: str) -> float:
-    """Get a linear coefficient from a LinearVariable in the SEM.
+def _get_coef(scm: SCM, var_name: str, parent_name: str) -> float:
+    """Get a linear coefficient from a LinearVariable in the SCM.
 
     Args:
-        sem: The structural equation model.
+        scm: The structural causal model.
         var_name: Name of the variable.
         parent_name: Name of the parent variable.
 
@@ -68,7 +68,7 @@ def _get_coef(sem: SEM, var_name: str, parent_name: str) -> float:
     Raises:
         AssertionError: If the variable is not a LinearVariable.
     """
-    var = sem._variables[var_name]
+    var = scm._variables[var_name]
     assert isinstance(var, LinearVariable)
     return var._coefs[parent_name]
 
@@ -77,7 +77,7 @@ class TestPosteriorStats:
     """Tests for posterior mean and variance accuracy using Laplace approximation."""
 
     def test_posterior_stats_observe_x_only(
-        self, sem: SEM, values: dict[str, Tensor]
+        self, scm: SCM, values: dict[str, Tensor]
     ) -> None:
         """Test posterior mean and variance when only X is observed.
 
@@ -86,14 +86,14 @@ class TestPosteriorStats:
         - mean: alpha * X / (1 + alpha^2)
         - variance: 1 / (1 + alpha^2)
         """
-        alpha = _get_coef(sem, "X", "Z")
+        alpha = _get_coef(scm, "X", "Z")
 
         observed: dict[str, Tensor] = {"X": values["X"]}
 
-        sem.posterior.fit(observed)
+        scm.posterior.fit(observed)
 
         torch.manual_seed(0)
-        samples = sem.posterior.sample(2000)
+        samples = scm.posterior.sample(2000)
 
         expected_means: Tensor = alpha * observed["X"] / (1 + alpha**2)
         expected_vars: Tensor = Tensor([1 / (1 + alpha**2)]).expand(10)
@@ -119,7 +119,7 @@ class TestCausalBiasComponents:
     """
 
     def test_du_fy_is_zero_for_treatment(
-        self, sem: SEM, values: dict[str, Tensor]
+        self, scm: SCM, values: dict[str, Tensor]
     ) -> None:
         """Test that du_fy = 0 for the treatment variable X.
 
@@ -128,17 +128,17 @@ class TestCausalBiasComponents:
         """
 
         observed: dict[str, Tensor] = {"X": values["X"][:1]}
-        sem.posterior.fit(observed)
+        scm.posterior.fit(observed)
 
         torch.manual_seed(0)
-        u_latent_samples = sem.posterior.sample(1)
+        u_latent_samples = scm.posterior.sample(1)
         u_latent = {k: v[0, 0] for k, v in u_latent_samples.items()}
         obs = {k: v[0] for k, v in observed.items()}
 
-        u_x = sem._get_u_observed(u_latent, obs, "X")
+        u_x = scm._get_u_observed(u_latent, obs, "X")
 
         f_mean_u = partial(
-            sem._compute_outcome_mean_from_noise,
+            scm._compute_outcome_mean_from_noise,
             latent=u_latent,
             observed=obs,
             input_name="X",
@@ -152,22 +152,22 @@ class TestCausalBiasComponents:
         )
 
     def test_mid_term_equals_expected_for_linear_confounder(
-        self, sem: SEM, values: dict[str, Tensor]
+        self, scm: SCM, values: dict[str, Tensor]
     ) -> None:
         """Test that mean of mid_term equals gamma*alpha/(1+alpha^2).
 
         The mid_term captures the confounding bias contribution, and its
         expected value should equal gamma * alpha / (1 + alpha^2).
         """
-        alpha = _get_coef(sem, "X", "Z")
-        gamma = _get_coef(sem, "Y", "Z")
+        alpha = _get_coef(scm, "X", "Z")
+        gamma = _get_coef(scm, "Y", "Z")
 
         observed: dict[str, Tensor] = {"X": values["X"]}
-        sem.posterior.fit(observed)
+        scm.posterior.fit(observed)
 
         torch.manual_seed(0)
-        u_latent_samples = sem.posterior.sample(2000)
-        outcome_means = sem._compute_conditional_outcome_mean(
+        u_latent_samples = scm.posterior.sample(2000)
+        outcome_means = scm._compute_conditional_outcome_mean(
             u_latent_samples, observed, outcome_name="Y"
         )
 
@@ -181,7 +181,7 @@ class TestCausalBiasComponents:
             for j in range(num_samples):
                 u_latent = {k: v[i, j] for k, v in u_latent_samples.items()}
                 obs = {k: v[i] for k, v in observed.items()}
-                mid_term = sem._compute_mid_term(
+                mid_term = scm._compute_mid_term(
                     u_latent,
                     obs,
                     outcome_mean=outcome_means[i],
@@ -201,7 +201,7 @@ class TestCausalBiasComponents:
         )
 
     def test_causal_effect_equals_beta_when_observing_x_only(
-        self, sem: SEM, values: dict[str, Tensor]
+        self, scm: SCM, values: dict[str, Tensor]
     ) -> None:
         """Test that causal effect of X on Y equals beta when only X is observed.
 
@@ -211,16 +211,16 @@ class TestCausalBiasComponents:
 
         The variance of the causal effect should be 0 since beta is a constant.
         """
-        beta = _get_coef(sem, "Y", "X")
+        beta = _get_coef(scm, "Y", "X")
 
         observed: dict[str, Tensor] = {"X": values["X"]}
 
-        sem.posterior.fit(observed)
+        scm.posterior.fit(observed)
 
-        causal_effect = sem.causal_effect(
+        causal_effect = scm.causal_effect(
             observed, treatment_name="X", outcome_name="Y"
         )
-        causal_effect_var = sem.causal_effect_var(
+        causal_effect_var = scm.causal_effect_var(
             observed, treatment_name="X", outcome_name="Y"
         )
 
@@ -235,7 +235,7 @@ class TestCausalBiasComponents:
         ), f"Causal effect variance should be 0, got {causal_effect_var}"
 
     def test_causal_bias_when_observing_x_only(
-        self, sem: SEM, values: dict[str, Tensor]
+        self, scm: SCM, values: dict[str, Tensor]
     ) -> None:
         """Test that causal bias of X on Y equals gamma*alpha/(1+alpha^2) when only X is observed.
 
@@ -247,14 +247,14 @@ class TestCausalBiasComponents:
         - alpha is the coefficient from Z to X
         - gamma is the coefficient from Z to Y
         """
-        alpha = _get_coef(sem, "X", "Z")
-        gamma = _get_coef(sem, "Y", "Z")
+        alpha = _get_coef(scm, "X", "Z")
+        gamma = _get_coef(scm, "Y", "Z")
 
         observed: dict[str, Tensor] = {"X": values["X"]}
 
-        sem.posterior.fit(observed)
+        scm.posterior.fit(observed)
 
-        causal_bias = sem.causal_bias(observed, treatment_name="X", outcome_name="Y")
+        causal_bias = scm.causal_bias(observed, treatment_name="X", outcome_name="Y")
 
         expected_causal_bias = torch.full_like(
             causal_bias, gamma * alpha / (1 + alpha**2)
@@ -265,7 +265,7 @@ class TestCausalBiasComponents:
         )
 
     def test_posterior_stats_observe_x_and_y(
-        self, sem: SEM, values: dict[str, Tensor]
+        self, scm: SCM, values: dict[str, Tensor]
     ) -> None:
         """Test posterior mean and variance when X and Y are observed.
 
@@ -274,16 +274,16 @@ class TestCausalBiasComponents:
         - mean: (gamma * (Y - beta*X) + alpha * X) / (1 + alpha^2 + gamma^2)
         - variance: 1 / (1 + alpha^2 + gamma^2)
         """
-        alpha = _get_coef(sem, "X", "Z")
-        beta = _get_coef(sem, "Y", "X")
-        gamma = _get_coef(sem, "Y", "Z")
+        alpha = _get_coef(scm, "X", "Z")
+        beta = _get_coef(scm, "Y", "X")
+        gamma = _get_coef(scm, "Y", "Z")
 
         observed: dict[str, Tensor] = {"X": values["X"], "Y": values["Y"]}
 
-        sem.posterior.fit(observed)
+        scm.posterior.fit(observed)
 
         torch.manual_seed(0)
-        samples = sem.posterior.sample(2000)
+        samples = scm.posterior.sample(2000)
 
         expected_means: Tensor = (
             gamma * (observed["Y"] - beta * observed["X"]) + alpha * observed["X"]
@@ -315,13 +315,13 @@ class TestOvercontrolModel:
     """
 
     @pytest.fixture
-    def overcontrol_sem(self) -> SEM:
-        """Create a test SEM with overcontrol structure X -> V, X -> Y, V -> Y.
+    def overcontrol_sem(self) -> SCM:
+        """Create a test SCM with overcontrol structure X -> V, X -> Y, V -> Y.
 
         Returns:
-            A SEM with three linear variables and unit noise.
+            A SCM with three linear variables and unit noise.
         """
-        return SEM(
+        return SCM(
             variables=[
                 LinearVariable(
                     name="X", parent_names=[], sigma=1.0, coefs={}, intercept=0.0
@@ -344,11 +344,11 @@ class TestOvercontrolModel:
         )
 
     @pytest.fixture
-    def overcontrol_values(self, overcontrol_sem: SEM) -> dict[str, Tensor]:
-        """Generate sample values from the overcontrol SEM.
+    def overcontrol_values(self, overcontrol_sem: SCM) -> dict[str, Tensor]:
+        """Generate sample values from the overcontrol SCM.
 
         Args:
-            overcontrol_sem: The structural equation model.
+            overcontrol_sem: The structural causal model.
 
         Returns:
             Dictionary of generated values for all variables.
@@ -357,7 +357,7 @@ class TestOvercontrolModel:
         return overcontrol_sem.generate(10)
 
     def test_causal_effect_overcontrol(
-        self, overcontrol_sem: SEM, overcontrol_values: dict[str, Tensor]
+        self, overcontrol_sem: SCM, overcontrol_values: dict[str, Tensor]
     ) -> None:
         """Test that causal effect of X on Y equals beta + gamma * alpha when observing X and V.
 
@@ -386,7 +386,7 @@ class TestOvercontrolModel:
         )
 
     def test_causal_bias_overcontrol(
-        self, overcontrol_sem: SEM, overcontrol_values: dict[str, Tensor]
+        self, overcontrol_sem: SCM, overcontrol_values: dict[str, Tensor]
     ) -> None:
         """Test that causal bias of X on Y equals -gamma * alpha when observing X and V.
 
@@ -429,13 +429,13 @@ class TestEndogenousSelectionModel:
     """
 
     @pytest.fixture
-    def endogenous_selection_sem(self) -> SEM:
-        """Create a test SEM with endogenous selection structure X -> Y, X -> V, Y -> V.
+    def endogenous_selection_sem(self) -> SCM:
+        """Create a test SCM with endogenous selection structure X -> Y, X -> V, Y -> V.
 
         Returns:
-            A SEM with three linear variables and unit noise.
+            A SCM with three linear variables and unit noise.
         """
-        return SEM(
+        return SCM(
             variables=[
                 LinearVariable(
                     name="X", parent_names=[], sigma=1.0, coefs={}, intercept=0.0
@@ -459,12 +459,12 @@ class TestEndogenousSelectionModel:
 
     @pytest.fixture
     def endogenous_selection_values(
-        self, endogenous_selection_sem: SEM
+        self, endogenous_selection_sem: SCM
     ) -> dict[str, Tensor]:
-        """Generate sample values from the endogenous selection SEM.
+        """Generate sample values from the endogenous selection SCM.
 
         Args:
-            endogenous_selection_sem: The structural equation model.
+            endogenous_selection_sem: The structural causal model.
 
         Returns:
             Dictionary of generated values for all variables.
@@ -474,7 +474,7 @@ class TestEndogenousSelectionModel:
 
     def test_causal_effect_endogenous_selection(
         self,
-        endogenous_selection_sem: SEM,
+        endogenous_selection_sem: SCM,
         endogenous_selection_values: dict[str, Tensor],
     ) -> None:
         """Test that causal effect of X on Y equals alpha when observing X and V.
@@ -503,7 +503,7 @@ class TestEndogenousSelectionModel:
 
     def test_causal_bias_endogenous_selection(
         self,
-        endogenous_selection_sem: SEM,
+        endogenous_selection_sem: SCM,
         endogenous_selection_values: dict[str, Tensor],
     ) -> None:
         """Test causal bias of X on Y when observing X and V in endogenous selection model.
@@ -536,7 +536,7 @@ class TestEndogenousSelectionModel:
 
     def test_contribution_observing_x_is_null(
         self,
-        endogenous_selection_sem: SEM,
+        endogenous_selection_sem: SCM,
         endogenous_selection_values: dict[str, Tensor],
     ) -> None:
         """Test that the mean contribution when observing X is null.
@@ -612,7 +612,7 @@ class TestEndogenousSelectionModel:
 
     def test_dx_diff_observing_v(
         self,
-        endogenous_selection_sem: SEM,
+        endogenous_selection_sem: SCM,
         endogenous_selection_values: dict[str, Tensor],
     ) -> None:
         """Test that dx_diff = beta + gamma*alpha when observing V.
@@ -656,7 +656,7 @@ class TestEndogenousSelectionModel:
 
     def test_du_fy_observing_v_is_zero(
         self,
-        endogenous_selection_sem: SEM,
+        endogenous_selection_sem: SCM,
         endogenous_selection_values: dict[str, Tensor],
     ) -> None:
         """Test that du_fy = 0 when observing V.
@@ -694,7 +694,7 @@ class TestEndogenousSelectionModel:
 
     def test_mid_term_observing_v(
         self,
-        endogenous_selection_sem: SEM,
+        endogenous_selection_sem: SCM,
         endogenous_selection_values: dict[str, Tensor],
     ) -> None:
         """Test that mean of mid_term = gamma/(1+gamma^2) when observing V.

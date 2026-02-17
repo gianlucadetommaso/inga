@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import argparse
 
-from steindag.sem import SEM
-from steindag.variable import Variable
+from inga.scm import SCM
+from inga.variable import Variable
 
 
 def main() -> None:
@@ -25,7 +25,7 @@ def main() -> None:
     parser.add_argument("--frames-per-flow", type=int, default=36)
     args = parser.parse_args()
 
-    sem = SEM(
+    scm = SCM(
         variables=[
             Variable(name="V1"),
             Variable(name="X", parent_names=["V1"]),
@@ -41,7 +41,7 @@ def main() -> None:
     outcome_name = "Y"
     observed_names = ["X", "V2", "V4", "V5"]
 
-    output = sem.animate(
+    output = scm.animate(
         output_path=args.output,
         observed_names=observed_names,
         treatment_name=treatment_name,
