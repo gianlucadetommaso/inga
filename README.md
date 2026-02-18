@@ -214,6 +214,23 @@ dataset.save(dataset_path)
 loaded_dataset = load_scm_dataset(dataset_path)
 ```
 
+Alternatively, you can generate datasets at random from config as follows:
+
+```python
+from inga.scm.dataset import SCMDatasetConfig, generate_scm_dataset
+from inga.scm.random import RandomSCMConfig
+
+config = SCMDatasetConfig(
+    scm_config=RandomSCMConfig(num_variables=4, parent_prob=0.5, seed=7),
+    num_samples=128,
+    num_queries=2,
+    min_observed=1,
+    seed=42,
+)
+
+dataset = generate_scm_dataset(config)
+```
+
 ## Cite Inga
 If you use `inga` in academic work, you can cite it with the following BibTeX entry:
 
