@@ -189,7 +189,7 @@ scm.export_html(
 )
 ```
 
-Run `uv run python examples/explore.py` to checkout an example of this!
+For an exmaple, run `uv run python examples/explore.py` or checkout [datacard.html](plots/datacard.html).
 
 ### Generate, save and load SCM datasets
 Given that we have constructed our SCM, let's generate, save and load a SCM dataset. 
