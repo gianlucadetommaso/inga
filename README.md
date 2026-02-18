@@ -1,6 +1,6 @@
 # Inga 因果: Causal Synthetic Tabular Data Toolkit
 
-![Coverage](https://img.shields.io/badge/coverage-91%25-brightgreen)
+![Coverage](https://img.shields.io/badge/coverage-91%25-brightgreen) [![Python 3.13+](https://img.shields.io/badge/python-3.13%2B-blue?logo=python&logoColor=white)](https://www.python.org/downloads/) [![PyPI version](https://img.shields.io/pypi/v/inga)](https://pypi.org/project/inga/) [![PyPI downloads](https://img.shields.io/pypi/dm/inga)](https://pypi.org/project/inga/)
 
 `inga` is a toolkit for generating and inspecting synthetic tabular datasets. It constructs arbitrarily complex Structural Causal Models (SCMs), draws samples from them, and computes causal effects and causal biases conditioned on observed variables and outcomes. All computed quantities are stored and made available for causally-informed pre-training of tabular models.
 
@@ -243,3 +243,7 @@ If you use `inga` in academic work, you can cite it with the following BibTeX en
   note = {GitHub repository}
 }
 ```
+
+## License
+
+Licensed under the [MIT License](LICENSE).
