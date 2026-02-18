@@ -4,7 +4,7 @@
 
 `inga` is a toolkit for generating and inspecting synthetic tabular datasets. It constructs arbitrarily complex Structural Causal Models (SCMs), draws samples from them, and computes causal effects and causal biases conditioned on observed variables and outcomes. All computed quantities are stored and made available for causally-informed pre-training of tabular models.
 
-![Flow X to Y](plots/explorer_assets/flow_X_to_Y.gif)
+![Flow X to Y](plots/datacard_assets/flow_X_to_Y.gif)
 
 ## Causal Effect and Causal Bias
 
