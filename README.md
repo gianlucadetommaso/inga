@@ -1,4 +1,4 @@
-# Inga 因果
+# Inga 因果: Causal Synthetic Tabular Data Toolkit
 
 ![Coverage](https://img.shields.io/badge/coverage-91%25-brightgreen)
 
@@ -125,7 +125,7 @@ scm.draw(output_path="YOUR_DAG.png")
 ```
 
 ### Create a SCM
-The class `Variable` defines a variable $V_i$ in the DAG, but leaves the mean function $\bar f_{V_i}$. To complete the SCM and compute causal quantities, you must create a child class that defines the mean function. For example:
+The class `Variable` defines a variable $V_i$ in the DAG, but leaves the mean function $\bar f_{V_i}$ empty. To complete the SCM and compute causal quantities, you have to create a child class that defines the mean function. For example:
 
 ```python
 import torch
@@ -215,7 +215,7 @@ loaded_dataset = load_scm_dataset(dataset_path)
 ```
 
 ## Cite Inga
-If you use `inga` in academic work, you can cite it with the following BibTeX entry (and optionally replace `year` and `note` with the exact release tag/commit and access date you used):
+If you use `inga` in academic work, you can cite it with the following BibTeX entry:
 
 ```bibtex
 @software{detommaso_inga,
