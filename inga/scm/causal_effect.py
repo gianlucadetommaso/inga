@@ -5,6 +5,8 @@ from torch.func import grad
 from functools import partial
 from typing import TYPE_CHECKING
 
+from inga.scm.variable.base import GaussianVariable
+
 if TYPE_CHECKING:
     from inga.scm.variable.base import Variable
     from inga.approx_posterior.laplace import LaplacePosterior
@@ -167,12 +169,28 @@ class CausalEffectMixin:
         Raises:
             ValueError: If the query is invalid.
         """
+        self._validate_gaussian_variables_for_causal_quantities()
+
         if outcome_name in observed:
             raise ValueError("`outcome_name` cannot be included in `observed_name`.")
         if treatment_name not in observed:
             raise ValueError("`treatment_name` must be included in `observed_name`.")
         if treatment_name == outcome_name:
             raise ValueError("`treatment_name` and `observed_name` cannot be equal.")
+
+    def _validate_gaussian_variables_for_causal_quantities(self) -> None:
+        """Ensure causal effect/bias routines are used with Gaussian variables only."""
+        non_gaussian = [
+            name
+            for name, variable in self._variables.items()
+            if not isinstance(variable, GaussianVariable)
+        ]
+        if non_gaussian:
+            raise ValueError(
+                "Causal effect and causal bias are currently supported only for "
+                "SCMs where all variables are instances of GaussianVariable. "
+                f"Found non-Gaussian variables: {sorted(non_gaussian)}."
+            )
 
     def _find_mediators(
         self,

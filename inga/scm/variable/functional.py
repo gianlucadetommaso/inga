@@ -6,10 +6,10 @@ from typing import Callable, Iterable
 
 from torch import Tensor
 
-from inga.scm.variable.base import Variable
+from inga.scm.variable.base import GaussianVariable
 
 
-class FunctionalVariable(Variable):
+class FunctionalVariable(GaussianVariable):
     """A variable with an arbitrary mean function.
 
     The mean function is provided as a callable mapping parent values to a tensor.
@@ -49,14 +49,10 @@ class FunctionalVariable(Variable):
         return self._f_mean(parents)
 
     def f(
-        self, parents: dict[str, Tensor], u: Tensor, f_mean: Tensor | None = None
+        self,
+        parents: dict[str, Tensor],
+        u: Tensor,
+        f_mean: Tensor | None = None,
     ) -> Tensor:
-        """Compute variable values as functional mean plus scaled noise."""
-        if self.sigma is None:
-            raise ValueError(
-                f"Variable '{self.name}' has no sigma configured. "
-                "Set sigma to evaluate structural equations."
-            )
-        if f_mean is None:
-            f_mean = self.f_mean(parents)
-        return f_mean + self.sigma * u
+        """Compute variable values as functional mean plus scaled Gaussian noise."""
+        return super().f(parents=parents, u=u, f_mean=f_mean)
