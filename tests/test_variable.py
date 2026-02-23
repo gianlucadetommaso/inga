@@ -2,7 +2,7 @@
 
 import pytest
 import torch
-from inga.scm.variable.base import Variable
+from inga.scm.variable.base import GaussianVariable, Variable
 from inga.scm.variable.linear import LinearVariable
 from inga.scm.variable.functional import FunctionalVariable
 
@@ -12,6 +12,13 @@ class ConcreteVariable(Variable):
 
     def f_mean(self, parents: dict[str, torch.Tensor]) -> torch.Tensor:
         """Return zero tensor for testing."""
+        return torch.tensor(0.0)
+
+
+class ConcreteGaussianVariable(GaussianVariable):
+    """Concrete Gaussian variable for testing Gaussian base behavior."""
+
+    def f_mean(self, parents: dict[str, torch.Tensor]) -> torch.Tensor:
         return torch.tensor(0.0)
 
 
@@ -45,18 +52,23 @@ class TestVariable:
             var.f_mean({})
 
     def test_base_variable_f_requires_f_mean(self) -> None:
-        """Base f delegates to f_mean and errors when no structural function exists."""
+        """Base Variable.f must be implemented by subclasses."""
         var = Variable(name="X", sigma=1.0)
 
-        with pytest.raises(NotImplementedError, match="structural function"):
+        with pytest.raises(NotImplementedError, match="noise model"):
             var.f({}, torch.randn(3))
 
-    def test_base_variable_f_raises_without_sigma(self) -> None:
-        """Base f should error when sigma is not configured."""
-        var = ConcreteVariable(name="X", sigma=None)
+    def test_gaussian_variable_f_raises_without_sigma(self) -> None:
+        """GaussianVariable requires sigma to be configured at init time."""
+        with pytest.raises(ValueError, match="requires `sigma`"):
+            ConcreteGaussianVariable(name="X", sigma=None)  # type: ignore[arg-type]
 
-        with pytest.raises(ValueError, match="has no sigma configured"):
-            var.f({}, torch.randn(3))
+    def test_gaussian_variable_f_works_with_sigma(self) -> None:
+        """GaussianVariable computes f_mean + sigma * noise."""
+        var = ConcreteGaussianVariable(name="X", sigma=2.0)
+        u = torch.tensor([1.0, -0.5])
+        out = var.f({}, u)
+        assert torch.allclose(out, torch.tensor([2.0, -1.0]))
 
 
 class TestLinearVariable:
@@ -320,3 +332,15 @@ class TestFunctionalVariable:
         x = torch.tensor([0.0, 1.0])
         result = var.f_mean({"X": x})
         assert torch.allclose(result, torch.sin(x))
+
+    def test_linear_and_functional_are_gaussian_variables(self) -> None:
+        """Concrete built-ins with additive noise should inherit GaussianVariable."""
+        linear = LinearVariable(name="X", sigma=1.0)
+        functional = FunctionalVariable(
+            name="Y",
+            sigma=1.0,
+            f_mean=lambda _: torch.tensor(0.0),
+        )
+
+        assert isinstance(linear, GaussianVariable)
+        assert isinstance(functional, GaussianVariable)

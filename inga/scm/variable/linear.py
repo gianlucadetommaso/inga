@@ -3,10 +3,10 @@
 import torch
 from torch import Tensor
 from typing import Iterable
-from inga.scm.variable.base import Variable
+from inga.scm.variable.base import GaussianVariable
 
 
-class LinearVariable(Variable):
+class LinearVariable(GaussianVariable):
     """A variable with a linear mean function.
 
     The mean function is: intercept + sum(coefs[parent] * parent for parent in parents).
@@ -88,14 +88,10 @@ class LinearVariable(Variable):
         return f_mean  # type: ignore[return-value]
 
     def f(
-        self, parents: dict[str, Tensor], u: Tensor, f_mean: Tensor | None = None
+        self,
+        parents: dict[str, Tensor],
+        u: Tensor,
+        f_mean: Tensor | None = None,
     ) -> Tensor:
-        """Compute variable values as linear mean plus scaled noise."""
-        if self.sigma is None:
-            raise ValueError(
-                f"Variable '{self.name}' has no sigma configured. "
-                "Set sigma to evaluate structural equations."
-            )
-        if f_mean is None:
-            f_mean = self.f_mean(parents)
-        return f_mean + self.sigma * u
+        """Compute variable values as linear mean plus scaled Gaussian noise."""
+        return super().f(parents=parents, u=u, f_mean=f_mean)

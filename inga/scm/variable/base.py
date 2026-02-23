@@ -9,7 +9,9 @@ class Variable:
 
     A variable is defined by its name, parent variables, and optional noise
     standard deviation.
-    The variable value is computed as f_mean(parents) + sigma * u, where u is a noise term.
+
+    This base class is intentionally agnostic to the noise model. Subclasses
+    must implement both :meth:`f_mean` and :meth:`f`.
 
     Attributes:
         name: The variable's identifier.
@@ -40,22 +42,12 @@ class Variable:
     ) -> Tensor:
         """Compute the variable value given parents and noise.
 
-        Args:
-            parents: Dictionary mapping parent names to their tensor values.
-            u: Noise tensor.
-            f_mean: Optional precomputed mean function value. If None, it will be computed.
-
-        Raises:
-            ValueError: If sigma is not configured.
+        Subclasses are responsible for specifying the structural/noise model.
         """
-        if self.sigma is None:
-            raise ValueError(
-                f"Variable '{self.name}' has no sigma configured. "
-                "Set sigma to evaluate structural equations."
-            )
-        if f_mean is None:
-            f_mean = self.f_mean(parents)
-        return f_mean + self.sigma * u
+        raise NotImplementedError(
+            f"Variable '{self.name}' has no noise model configured. "
+            "Use a concrete subclass (e.g., GaussianVariable) and/or override `f`."
+        )
 
     def f_mean(self, parents: dict[str, Tensor]) -> Tensor:
         """Compute the mean function (expected value given parents).
@@ -72,3 +64,39 @@ class Variable:
         raise NotImplementedError(
             f"Variable '{self.name}' has no structural function configured."
         )
+
+
+class GaussianVariable(Variable):
+    """Variable with additive Gaussian noise.
+
+    The structural equation is:
+
+        value = f_mean(parents) + sigma * u
+
+    where ``u`` is standard normal noise and ``sigma`` is required.
+    """
+
+    def __init__(
+        self,
+        name: str,
+        sigma: float,
+        parent_names: Iterable[str] | None = None,
+    ) -> None:
+        if sigma is None:
+            raise ValueError(
+                f"GaussianVariable '{name}' requires `sigma` and it cannot be None."
+            )
+        super().__init__(name=name, sigma=sigma, parent_names=parent_names)
+
+    def f(
+        self, parents: dict[str, Tensor], u: Tensor, f_mean: Tensor | None = None
+    ) -> Tensor:
+        """Compute value from mean function and additive Gaussian noise."""
+        if f_mean is None:
+            f_mean = self.f_mean(parents)
+        sigma = self.sigma
+        if sigma is None:
+            raise ValueError(
+                f"GaussianVariable '{self.name}' requires `sigma` and it cannot be None."
+            )
+        return f_mean + sigma * u
