@@ -130,9 +130,9 @@ The class `Variable` defines a variable $V_i$ in the DAG, but leaves the mean fu
 ```python
 import torch
 from torch import Tensor
-from inga.scm import Variable
+from inga.scm import GaussianVariable
 
-class MyVariable(Variable):
+class MyVariable(GaussianVariable):
     def f_mean(self, parents: dict[str, Tensor]) -> Tensor:
         f_mean: Tensor | float = 0.0
 
@@ -142,7 +142,7 @@ class MyVariable(Variable):
         return f_mean
 ```
 
-An example of built-in `Variable` with defined mean function is [LinearVariable](inga/scm/variable/linear.py). Now, Let's update the SCM using our newly defined variable class!
+An example of built-in `GaussianVariable` with defined mean function is [LinearVariable](inga/scm/variable/linear.py). Now, Let's update the SCM using our newly defined variable class!
 
 ```python
 from inga.scm import SCM
