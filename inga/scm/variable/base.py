@@ -2,6 +2,7 @@
 
 from torch import Tensor
 from typing import Iterable
+from typing import cast
 
 
 class Variable:
@@ -94,9 +95,5 @@ class GaussianVariable(Variable):
         """Compute value from mean function and additive Gaussian noise."""
         if f_mean is None:
             f_mean = self.f_mean(parents)
-        sigma = self.sigma
-        if sigma is None:
-            raise ValueError(
-                f"GaussianVariable '{self.name}' requires `sigma` and it cannot be None."
-            )
+        sigma = cast(float, self.sigma)
         return f_mean + sigma * u
