@@ -30,6 +30,10 @@ class Variable:
         """
         self.name = name
         self.parent_names = list(parent_names) if parent_names is not None else []
+        # Optional Gaussian scale parameter used by Gaussian-like subclasses.
+        # Kept on the base class for static typing convenience across generic
+        # SCM utilities that may access `sigma` after runtime validation.
+        self.sigma: float | None = None
 
     def f(
         self,
@@ -58,4 +62,24 @@ class Variable:
         """
         raise NotImplementedError(
             f"Variable '{self.name}' has no noise sampler configured."
+        )
+
+    def f_mean(self, parents: dict[str, Tensor]) -> Tensor:
+        """Compute the deterministic mean component of the structural equation.
+
+        Subclasses with additive-noise structure (e.g. GaussianVariable)
+        should implement this method.
+        """
+        raise NotImplementedError(
+            f"Variable '{self.name}' has no mean function configured."
+        )
+
+    def f_from_mean(self, f_mean: Tensor, u: Tensor) -> Tensor:
+        """Reconstruct value from mean and noise components.
+
+        Subclasses with additive-noise structure can override this for efficient
+        recomposition when mean is already available.
+        """
+        raise NotImplementedError(
+            f"Variable '{self.name}' cannot be reconstructed from mean and noise."
         )

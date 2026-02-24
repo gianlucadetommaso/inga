@@ -64,6 +64,7 @@ class CategoricalVariable(Variable):
     ) -> Tensor:
         """Sample Gumbel noise for categorical structural equations."""
         logits = self.f_logits(parents)
+        shape: tuple[int, ...]
         if logits.ndim == 1:
             shape = (num_samples, logits.shape[0])
         elif logits.ndim >= 2:
