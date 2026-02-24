@@ -202,6 +202,23 @@ class TestSEMGenerate:
         assert values["Z"].shape == (1,)
         assert values["X"].shape == (1,)
 
+    def test_generate_with_categorical_variable_uses_categorical_sampling(self) -> None:
+        """Categorical nodes should generate one-hot vectors via their own sampler."""
+        scm = SCM(
+            variables=[
+                CategoricalVariable(
+                    name="X",
+                    f_mean=lambda _: torch.tensor([0.2, 1.1, -0.7]),
+                ),
+            ]
+        )
+
+        values = scm.generate(32)
+        x = values["X"]
+        assert x.shape == (32, 3)
+        assert torch.all((x == 0) | (x == 1))
+        assert torch.allclose(x.sum(dim=-1), torch.ones(32))
+
 
 class TestSEMPosterior:
     """Tests for SCM posterior inference."""

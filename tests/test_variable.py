@@ -350,6 +350,26 @@ class TestFunctionalVariable:
 class TestCategoricalVariable:
     """Tests for CategoricalVariable class."""
 
+    def test_init_uses_temperature_and_no_sigma(self) -> None:
+        """CategoricalVariable should use temperature and keep sigma unset."""
+        var = CategoricalVariable(
+            name="C",
+            f_mean=lambda _: torch.tensor([0.0, 1.0]),
+            temperature=0.2,
+        )
+
+        assert var.temperature == pytest.approx(0.2)
+        assert var.sigma is None
+
+    def test_init_rejects_non_positive_temperature(self) -> None:
+        """Temperature must be strictly positive."""
+        with pytest.raises(ValueError, match="temperature"):
+            CategoricalVariable(
+                name="C",
+                f_mean=lambda _: torch.tensor([0.0, 1.0]),
+                temperature=0.0,
+            )
+
     def test_forward_pass_is_one_hot_argmax(self) -> None:
         """Forward values should be exact one-hot selections."""
         var = CategoricalVariable(
@@ -384,3 +404,27 @@ class TestCategoricalVariable:
 
         assert parent.grad is not None
         assert parent.grad.abs().item() > 0.0
+
+    def test_sample_noise_returns_gumbel_with_expected_shape(self) -> None:
+        """Categorical noise sampler should return finite Gumbel noise."""
+        var = CategoricalVariable(
+            name="C",
+            f_mean=lambda _: torch.tensor([0.2, 0.8, -0.4]),
+        )
+
+        noise = var.sample_noise(num_samples=7, parents={})
+        assert noise.shape == (7, 3)
+        assert torch.isfinite(noise).all()
+
+
+def test_gaussian_variable_sample_noise_shape() -> None:
+    """Gaussian variables should sample standard normal noise."""
+
+    class _TmpGaussian(GaussianVariable):
+        def f_mean(self, parents: dict[str, torch.Tensor]) -> torch.Tensor:
+            return torch.tensor(0.0)
+
+    var = _TmpGaussian(name="X", sigma=1.0)
+    noise = var.sample_noise(num_samples=11, parents={})
+    assert noise.shape == (11,)
+    assert torch.isfinite(noise).all()

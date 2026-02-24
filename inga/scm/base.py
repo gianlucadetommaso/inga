@@ -42,7 +42,9 @@ class SCM(HTMLMixin, PlottingMixin, CausalBiasMixin):
                 for pa_name, parent in values.items()
                 if pa_name in variable.parent_names
             }
-            values[name] = variable.f(parents, torch.randn(num_samples))
+            f_mean = variable.f_mean(parents)
+            noise = variable.sample_noise(num_samples, parents, f_mean=f_mean)
+            values[name] = variable.f(parents, noise, f_mean=f_mean)
         return values
 
     def posterior_predictive_samples(

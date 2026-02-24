@@ -1,5 +1,6 @@
 """Base classes for structural causal model variables."""
 
+import torch
 from torch import Tensor
 from typing import Iterable, cast
 
@@ -65,6 +66,21 @@ class Variable:
             f"Variable '{self.name}' has no structural function configured."
         )
 
+    def sample_noise(
+        self,
+        num_samples: int,
+        parents: dict[str, Tensor],
+        f_mean: Tensor | None = None,
+    ) -> Tensor:
+        """Sample exogenous noise for this variable.
+
+        Subclasses should implement the distribution used for their structural
+        equations.
+        """
+        raise NotImplementedError(
+            f"Variable '{self.name}' has no noise sampler configured."
+        )
+
 
 class GaussianVariable(Variable):
     """Variable with additive Gaussian noise.
@@ -96,3 +112,15 @@ class GaussianVariable(Variable):
             f_mean = self.f_mean(parents)
         sigma = cast(float, self.sigma)
         return f_mean + sigma * u
+
+    def sample_noise(
+        self,
+        num_samples: int,
+        parents: dict[str, Tensor],
+        f_mean: Tensor | None = None,
+    ) -> Tensor:
+        """Sample standard Gaussian noise."""
+        reference = f_mean if f_mean is not None else next(iter(parents.values()), None)
+        if reference is None:
+            return torch.randn(num_samples)
+        return torch.randn(num_samples, device=reference.device, dtype=reference.dtype)
