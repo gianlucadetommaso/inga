@@ -4,6 +4,7 @@ import matplotlib
 import torch
 import pytest
 from inga.scm.variable.base import Variable
+from inga.scm.variable.categorical import CategoricalVariable
 from inga.scm.variable.linear import LinearVariable
 from inga.scm.base import SCM
 from inga.scm.random import (
@@ -243,6 +244,31 @@ class TestSEMPosterior:
         )
         observed = {"X": torch.tensor([0.1, -0.2])}
         scm.posterior.fit(observed)
+
+        with pytest.raises(ValueError, match="supported only for SCMs"):
+            scm.causal_effect(observed, treatment_name="X", outcome_name="Y")
+
+        with pytest.raises(ValueError, match="supported only for SCMs"):
+            scm.causal_bias(observed, treatment_name="X", outcome_name="Y")
+
+    def test_causal_quantities_reject_categorical_variables(self) -> None:
+        """Causal quantities are currently unsupported when SCM includes categorical nodes."""
+        scm = SCM(
+            variables=[
+                CategoricalVariable(
+                    name="X",
+                    f_mean=lambda _: torch.tensor([0.4, -0.1, 0.8]),
+                ),
+                LinearVariable(
+                    name="Y",
+                    parent_names=["X"],
+                    sigma=1.0,
+                    coefs={"X": 1.0},
+                    intercept=0.0,
+                ),
+            ]
+        )
+        observed = {"X": torch.tensor([1.0, 0.0])}
 
         with pytest.raises(ValueError, match="supported only for SCMs"):
             scm.causal_effect(observed, treatment_name="X", outcome_name="Y")

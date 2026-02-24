@@ -3,6 +3,7 @@
 import pytest
 import torch
 from inga.scm.variable.base import GaussianVariable, Variable
+from inga.scm.variable.categorical import CategoricalVariable
 from inga.scm.variable.linear import LinearVariable
 from inga.scm.variable.functional import FunctionalVariable
 
@@ -344,3 +345,42 @@ class TestFunctionalVariable:
 
         assert isinstance(linear, GaussianVariable)
         assert isinstance(functional, GaussianVariable)
+
+
+class TestCategoricalVariable:
+    """Tests for CategoricalVariable class."""
+
+    def test_forward_pass_is_one_hot_argmax(self) -> None:
+        """Forward values should be exact one-hot selections."""
+        var = CategoricalVariable(
+            name="C",
+            f_mean=lambda _: torch.tensor([0.1, 3.0, -1.0]),
+        )
+
+        out = var.f({}, torch.zeros(5))
+
+        assert out.shape == (5, 3)
+        expected = torch.tensor([0.0, 1.0, 0.0]).expand(5, 3)
+        assert torch.allclose(out, expected)
+
+    def test_backward_flows_through_softmax_relaxation(self) -> None:
+        """Gradient should match the straight-through softmax path."""
+        parent = torch.tensor([0.2], requires_grad=True)
+        var = CategoricalVariable(
+            name="C",
+            parent_names=["P"],
+            f_mean=lambda parents: torch.stack(
+                [
+                    parents["P"].squeeze(-1),
+                    -parents["P"].squeeze(-1),
+                ],
+                dim=-1,
+            ),
+        )
+
+        out = var.f({"P": parent}, torch.zeros_like(parent))
+        loss = out[..., 0].sum()
+        loss.backward()
+
+        assert parent.grad is not None
+        assert parent.grad.abs().item() > 0.0

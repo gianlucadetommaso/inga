@@ -1,7 +1,14 @@
 """Variable module."""
 
 from inga.scm.variable.base import GaussianVariable, Variable
+from inga.scm.variable.categorical import CategoricalVariable
 from inga.scm.variable.linear import LinearVariable
 from inga.scm.variable.functional import FunctionalVariable
 
-__all__ = ["Variable", "GaussianVariable", "LinearVariable", "FunctionalVariable"]
+__all__ = [
+    "Variable",
+    "GaussianVariable",
+    "CategoricalVariable",
+    "LinearVariable",
+    "FunctionalVariable",
+]

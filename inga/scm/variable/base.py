@@ -1,8 +1,7 @@
 """Base classes for structural causal model variables."""
 
 from torch import Tensor
-from typing import Iterable
-from typing import cast
+from typing import Iterable, cast
 
 
 class Variable:
