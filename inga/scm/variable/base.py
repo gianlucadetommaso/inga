@@ -93,9 +93,9 @@ class GaussianVariable(Variable):
         self, parents: dict[str, Tensor], u: Tensor
     ) -> Tensor:
         """Compute value from mean function and additive Gaussian noise."""
-        structural = self.f_mean(parents)
+        f_mean = self.f_mean(parents)
         sigma = cast(float, self.sigma)
-        return structural + sigma * u
+        return f_mean + sigma * u
 
     def f_mean(self, parents: dict[str, Tensor]) -> Tensor:
         """Compute the mean function for Gaussian structural equations."""
