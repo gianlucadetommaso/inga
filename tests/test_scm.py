@@ -20,6 +20,15 @@ matplotlib.use("Agg")
 class NonGaussianVariable(Variable):
     """Simple non-Gaussian variable used to test causal quantity guards."""
 
+    def __init__(
+        self,
+        name: str,
+        sigma: float,
+        parent_names: list[str] | None = None,
+    ) -> None:
+        super().__init__(name=name, parent_names=parent_names)
+        self.sigma = sigma
+
     def f_mean(self, parents: dict[str, torch.Tensor]) -> torch.Tensor:
         if not parents:
             return torch.tensor(0.0)
@@ -30,12 +39,17 @@ class NonGaussianVariable(Variable):
         self,
         parents: dict[str, torch.Tensor],
         u: torch.Tensor,
-        f_mean: torch.Tensor | None = None,
     ) -> torch.Tensor:
-        if f_mean is None:
-            f_mean = self.f_mean(parents)
+        f_mean = self.f_mean(parents)
         # Deliberately non-Gaussian behavior to represent another variable family.
         return f_mean + u**2
+
+    def sample_noise(
+        self,
+        num_samples: int,
+        parents: dict[str, torch.Tensor],
+    ) -> torch.Tensor:
+        return torch.randn(num_samples)
 
 
 @pytest.fixture

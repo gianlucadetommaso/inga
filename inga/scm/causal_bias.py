@@ -362,6 +362,6 @@ class CausalBiasMixin(CausalEffectMixin):
                         "Set sigma to evaluate causal bias."
                     )
                 residual = ((observed[name] - f_mean) / sigma).detach()
-                values[name] = variable.f(parents, residual)
+                values[name] = variable.f_from_mean(f_mean=f_mean, u=residual)
 
         raise ValueError(f"Outcome variable '{outcome_name}' not found in the SCM.")

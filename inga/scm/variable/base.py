@@ -15,25 +15,21 @@ class Variable:
     Attributes:
         name: The variable's identifier.
         parent_names: Names of parent variables in the DAG.
-        sigma: Optional metadata for subclasses that use a scale parameter.
     """
 
     def __init__(
         self,
         name: str,
-        sigma: float | None = None,
         parent_names: Iterable[str] | None = None,
     ) -> None:
         """Initialize a variable.
 
         Args:
             name: The variable's identifier.
-            sigma: Optional metadata for subclasses that use a scale parameter.
             parent_names: Names of parent variables in the DAG. Defaults to empty list.
         """
         self.name = name
         self.parent_names = list(parent_names) if parent_names is not None else []
-        self.sigma = sigma
 
     def f(
         self,

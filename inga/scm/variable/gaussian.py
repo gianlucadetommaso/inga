@@ -27,11 +27,20 @@ class GaussianVariable(Variable):
             raise ValueError(
                 f"GaussianVariable '{name}' requires `sigma` and it cannot be None."
             )
-        super().__init__(name=name, sigma=sigma, parent_names=parent_names)
+        super().__init__(name=name, parent_names=parent_names)
+        self.sigma = sigma
 
     def f(self, parents: dict[str, Tensor], u: Tensor) -> Tensor:
         """Compute value from mean function and additive Gaussian noise."""
         f_mean = self.f_mean(parents)
+        return self.f_from_mean(f_mean=f_mean, u=u)
+
+    def f_from_mean(self, f_mean: Tensor, u: Tensor) -> Tensor:
+        """Combine precomputed mean and noise into the structural value.
+
+        This is useful in routines that already computed ``f_mean`` and want to
+        avoid recomputing it when forming ``f_mean + sigma * u``.
+        """
         sigma = cast(float, self.sigma)
         return f_mean + sigma * u
 

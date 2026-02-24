@@ -33,7 +33,7 @@ class CategoricalVariable(Variable):
     ) -> None:
         if temperature <= 0:
             raise ValueError("`temperature` must be positive.")
-        super().__init__(name=name, sigma=None, parent_names=parent_names)
+        super().__init__(name=name, parent_names=parent_names)
         self._f_logits = f_logits
         self._temperature = temperature
 
