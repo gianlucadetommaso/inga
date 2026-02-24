@@ -1,15 +1,13 @@
 """Base classes for structural causal model variables."""
 
-import torch
 from torch import Tensor
-from typing import Iterable, cast
+from typing import Iterable
 
 
 class Variable:
     """A variable in a structural causal model.
 
-    A variable is defined by its name, parent variables, and optional noise
-    standard deviation.
+    A variable is defined by its name and parent variables.
 
     This base class is intentionally agnostic to the noise model. Subclasses
     must implement :meth:`f` and :meth:`sample_noise`.
@@ -17,7 +15,7 @@ class Variable:
     Attributes:
         name: The variable's identifier.
         parent_names: Names of parent variables in the DAG.
-        sigma: Standard deviation of the additive noise term.
+        sigma: Optional metadata for subclasses that use a scale parameter.
     """
 
     def __init__(
@@ -30,8 +28,7 @@ class Variable:
 
         Args:
             name: The variable's identifier.
-            sigma: Standard deviation of the additive noise term. Optional when
-                only defining DAG structure.
+            sigma: Optional metadata for subclasses that use a scale parameter.
             parent_names: Names of parent variables in the DAG. Defaults to empty list.
         """
         self.name = name
@@ -43,9 +40,10 @@ class Variable:
         parents: dict[str, Tensor],
         u: Tensor,
     ) -> Tensor:
-        """Compute the variable value given parents and noise.
+        """Compute the variable value given parents and exogenous noise.
 
-        Subclasses are responsible for specifying the structural/noise model.
+        This base class intentionally does not define any structural equation.
+        Subclasses are responsible for specifying the full forward model.
         """
         raise NotImplementedError(
             f"Variable '{self.name}' has no noise model configured. "
@@ -65,48 +63,3 @@ class Variable:
         raise NotImplementedError(
             f"Variable '{self.name}' has no noise sampler configured."
         )
-
-
-class GaussianVariable(Variable):
-    """Variable with additive Gaussian noise.
-
-    The structural equation is:
-
-        value = f_mean(parents) + sigma * u
-
-    where ``u`` is standard normal noise and ``sigma`` is required.
-    """
-
-    def __init__(
-        self,
-        name: str,
-        sigma: float,
-        parent_names: Iterable[str] | None = None,
-    ) -> None:
-        if sigma is None:
-            raise ValueError(
-                f"GaussianVariable '{name}' requires `sigma` and it cannot be None."
-            )
-        super().__init__(name=name, sigma=sigma, parent_names=parent_names)
-
-    def f(
-        self, parents: dict[str, Tensor], u: Tensor
-    ) -> Tensor:
-        """Compute value from mean function and additive Gaussian noise."""
-        f_mean = self.f_mean(parents)
-        sigma = cast(float, self.sigma)
-        return f_mean + sigma * u
-
-    def f_mean(self, parents: dict[str, Tensor]) -> Tensor:
-        """Compute the mean function for Gaussian structural equations."""
-        raise NotImplementedError(
-            f"GaussianVariable '{self.name}' has no structural mean function configured."
-        )
-
-    def sample_noise(
-        self,
-        num_samples: int,
-        parents: dict[str, Tensor],
-    ) -> Tensor:
-        """Sample standard Gaussian noise."""
-        return torch.randn(num_samples)

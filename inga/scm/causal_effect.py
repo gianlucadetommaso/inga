@@ -5,7 +5,7 @@ from torch.func import grad
 from functools import partial
 from typing import TYPE_CHECKING
 
-from inga.scm.variable.base import GaussianVariable
+from inga.scm.variable.gaussian import GaussianVariable
 
 if TYPE_CHECKING:
     from inga.scm.variable.base import Variable

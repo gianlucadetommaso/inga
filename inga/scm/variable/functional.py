@@ -6,7 +6,7 @@ from typing import Callable, Iterable
 
 from torch import Tensor
 
-from inga.scm.variable.base import GaussianVariable
+from inga.scm.variable.gaussian import GaussianVariable
 
 
 class FunctionalVariable(GaussianVariable):

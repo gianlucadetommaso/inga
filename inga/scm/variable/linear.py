@@ -3,7 +3,7 @@
 import torch
 from torch import Tensor
 from typing import Iterable
-from inga.scm.variable.base import GaussianVariable
+from inga.scm.variable.gaussian import GaussianVariable
 
 
 class LinearVariable(GaussianVariable):
