@@ -16,6 +16,27 @@ from inga.scm.random import (
 matplotlib.use("Agg")
 
 
+class NonGaussianVariable(Variable):
+    """Simple non-Gaussian variable used to test causal quantity guards."""
+
+    def f_mean(self, parents: dict[str, torch.Tensor]) -> torch.Tensor:
+        if not parents:
+            return torch.tensor(0.0)
+        parent = next(iter(parents.values()))
+        return torch.zeros_like(parent)
+
+    def f(
+        self,
+        parents: dict[str, torch.Tensor],
+        u: torch.Tensor,
+        f_mean: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        if f_mean is None:
+            f_mean = self.f_mean(parents)
+        # Deliberately non-Gaussian behavior to represent another variable family.
+        return f_mean + u**2
+
+
 @pytest.fixture
 def simple_sem() -> SCM:
     """Create a simple SCM with Z -> X structure."""
@@ -211,6 +232,23 @@ class TestSEMPosterior:
 
         with pytest.raises(ValueError, match="fit"):
             scm.posterior.sample(10)
+
+    def test_causal_quantities_require_gaussian_variables(self) -> None:
+        """Causal effect/bias should be blocked for SCMs with non-Gaussian variables."""
+        scm = SCM(
+            variables=[
+                NonGaussianVariable(name="X", sigma=1.0),
+                NonGaussianVariable(name="Y", sigma=1.0, parent_names=["X"]),
+            ]
+        )
+        observed = {"X": torch.tensor([0.1, -0.2])}
+        scm.posterior.fit(observed)
+
+        with pytest.raises(ValueError, match="supported only for SCMs"):
+            scm.causal_effect(observed, treatment_name="X", outcome_name="Y")
+
+        with pytest.raises(ValueError, match="supported only for SCMs"):
+            scm.causal_bias(observed, treatment_name="X", outcome_name="Y")
 
 
 class TestSEMPosteriorPredictiveHTML:

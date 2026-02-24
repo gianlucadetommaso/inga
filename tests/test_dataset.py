@@ -14,11 +14,11 @@ from inga.scm.dataset import (
 )
 from inga.scm.dataset_core import CausalQueryConfig as CoreCausalQueryConfig
 from inga.scm.random import RandomSCMConfig
-from inga.scm.variable.base import Variable
+from inga.scm.variable.base import GaussianVariable, Variable
 from inga.scm.variable.linear import LinearVariable
 
 
-class ShiftVariable(Variable):
+class ShiftVariable(GaussianVariable):
     """Simple custom variable used to validate SCM (de)serialization extension."""
 
     def __init__(
