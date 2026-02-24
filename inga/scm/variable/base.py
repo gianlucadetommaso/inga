@@ -12,7 +12,7 @@ class Variable:
     standard deviation.
 
     This base class is intentionally agnostic to the noise model. Subclasses
-    must implement both :meth:`f_mean` and :meth:`f`.
+    must implement :meth:`f` and :meth:`sample_noise`.
 
     Attributes:
         name: The variable's identifier.
@@ -50,27 +50,11 @@ class Variable:
             "Use a concrete subclass (e.g., GaussianVariable) and/or override `f`."
         )
 
-    def f_mean(self, parents: dict[str, Tensor]) -> Tensor:
-        """Compute the mean function (expected value given parents).
-
-        Args:
-            parents: Dictionary mapping parent names to their tensor values.
-
-        Returns:
-            Mean function value.
-
-        Raises:
-            NotImplementedError: If no structural function is provided.
-        """
-        raise NotImplementedError(
-            f"Variable '{self.name}' has no structural function configured."
-        )
-
     def sample_noise(
         self,
         num_samples: int,
         parents: dict[str, Tensor],
-        f_mean: Tensor | None = None,
+        **kwargs: Tensor,
     ) -> Tensor:
         """Sample exogenous noise for this variable.
 
@@ -113,6 +97,12 @@ class GaussianVariable(Variable):
         sigma = cast(float, self.sigma)
         return f_mean + sigma * u
 
+    def f_mean(self, parents: dict[str, Tensor]) -> Tensor:
+        """Compute the mean function for Gaussian structural equations."""
+        raise NotImplementedError(
+            f"GaussianVariable '{self.name}' has no structural mean function configured."
+        )
+
     def sample_noise(
         self,
         num_samples: int,
@@ -120,7 +110,8 @@ class GaussianVariable(Variable):
         f_mean: Tensor | None = None,
     ) -> Tensor:
         """Sample standard Gaussian noise."""
-        reference = f_mean if f_mean is not None else next(iter(parents.values()), None)
-        if reference is None:
-            return torch.randn(num_samples)
-        return torch.randn(num_samples, device=reference.device, dtype=reference.dtype)
+        if f_mean is None:
+            raise ValueError(
+                "GaussianVariable.sample_noise requires `f_mean` for dtype/device inference."
+            )
+        return torch.randn(num_samples, device=f_mean.device, dtype=f_mean.dtype)

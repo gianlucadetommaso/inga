@@ -45,19 +45,19 @@ class TestVariable:
         assert var.parent_names == ["A", "B"]
         assert isinstance(var.parent_names, list)
 
-    def test_base_variable_f_mean_not_implemented(self) -> None:
-        """Bare Variable should not implement a mean function."""
-        var = Variable(name="X")
-
-        with pytest.raises(NotImplementedError, match="structural function"):
-            var.f_mean({})
-
     def test_base_variable_f_requires_f_mean(self) -> None:
         """Base Variable.f must be implemented by subclasses."""
         var = Variable(name="X", sigma=1.0)
 
         with pytest.raises(NotImplementedError, match="noise model"):
             var.f({}, torch.randn(3))
+
+    def test_base_variable_sample_noise_not_implemented(self) -> None:
+        """Base Variable.sample_noise must be implemented by subclasses."""
+        var = Variable(name="X", sigma=1.0)
+
+        with pytest.raises(NotImplementedError, match="noise sampler"):
+            var.sample_noise(3, {})
 
     def test_gaussian_variable_f_raises_without_sigma(self) -> None:
         """GaussianVariable requires sigma to be configured at init time."""
@@ -352,13 +352,9 @@ class TestCategoricalVariable:
 
     def test_init_uses_temperature_and_no_sigma(self) -> None:
         """CategoricalVariable should use temperature and keep sigma unset."""
-        var = CategoricalVariable(
-            name="C",
-            f_mean=lambda _: torch.tensor([0.0, 1.0]),
-            temperature=0.2,
-        )
+        var = CategoricalVariable(name="C", f_logits=lambda _: torch.tensor([0.0, 1.0]), temperature=0.2)
 
-        assert var.temperature == pytest.approx(0.2)
+        assert var._temperature == pytest.approx(0.2)
         assert var.sigma is None
 
     def test_init_rejects_non_positive_temperature(self) -> None:
@@ -366,7 +362,7 @@ class TestCategoricalVariable:
         with pytest.raises(ValueError, match="temperature"):
             CategoricalVariable(
                 name="C",
-                f_mean=lambda _: torch.tensor([0.0, 1.0]),
+                f_logits=lambda _: torch.tensor([0.0, 1.0]),
                 temperature=0.0,
             )
 
@@ -374,7 +370,7 @@ class TestCategoricalVariable:
         """Forward values should be exact one-hot selections."""
         var = CategoricalVariable(
             name="C",
-            f_mean=lambda _: torch.tensor([0.1, 3.0, -1.0]),
+            f_logits=lambda _: torch.tensor([0.1, 3.0, -1.0]),
         )
 
         out = var.f({}, torch.zeros(5))
@@ -389,7 +385,7 @@ class TestCategoricalVariable:
         var = CategoricalVariable(
             name="C",
             parent_names=["P"],
-            f_mean=lambda parents: torch.stack(
+            f_logits=lambda parents: torch.stack(
                 [
                     parents["P"].squeeze(-1),
                     -parents["P"].squeeze(-1),
@@ -409,7 +405,7 @@ class TestCategoricalVariable:
         """Categorical noise sampler should return finite Gumbel noise."""
         var = CategoricalVariable(
             name="C",
-            f_mean=lambda _: torch.tensor([0.2, 0.8, -0.4]),
+            f_logits=lambda _: torch.tensor([0.2, 0.8, -0.4]),
         )
 
         noise = var.sample_noise(num_samples=7, parents={})
@@ -425,6 +421,6 @@ def test_gaussian_variable_sample_noise_shape() -> None:
             return torch.tensor(0.0)
 
     var = _TmpGaussian(name="X", sigma=1.0)
-    noise = var.sample_noise(num_samples=11, parents={})
+    noise = var.sample_noise(num_samples=11, parents={}, f_mean=torch.tensor(0.0))
     assert noise.shape == (11,)
     assert torch.isfinite(noise).all()

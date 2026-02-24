@@ -13,7 +13,7 @@ from inga.scm.variable.base import Variable
 class CategoricalVariable(Variable):
     """A variable with a straight-through categorical structural equation.
 
-    Given ``V_circ = f_mean(parents) + U`` (with logits in the last dimension),
+    Given ``V_circ = f_logits(parents) + U`` (with logits in the last dimension),
     this variable computes:
 
     - ``V_bar = one_hot(argmax(V_circ))``
@@ -27,29 +27,33 @@ class CategoricalVariable(Variable):
     def __init__(
         self,
         name: str,
-        f_mean: Callable[[dict[str, Tensor]], Tensor],
+        f_logits: Callable[[dict[str, Tensor]], Tensor],
         parent_names: Iterable[str] | None = None,
         temperature: float = 0.1,
     ) -> None:
         if temperature <= 0:
             raise ValueError("`temperature` must be positive.")
         super().__init__(name=name, sigma=None, parent_names=parent_names)
-        self._f_mean = f_mean
-        self.temperature = temperature
+        self._f_logits = f_logits
+        self._temperature = temperature
 
-    def f_mean(self, parents: dict[str, Tensor]) -> Tensor:
+    def f_logits(self, parents: dict[str, Tensor]) -> Tensor:
         """Compute logits from parent values."""
-        return self._f_mean(parents)
+        return self._f_logits(parents)
 
     def f(
-        self, parents: dict[str, Tensor], u: Tensor, f_mean: Tensor | None = None
+        self,
+        parents: dict[str, Tensor],
+        u: Tensor,
+        f_logits: Tensor | None = None,
+        **kwargs: Tensor,
     ) -> Tensor:
         """Compute straight-through one-hot values from logits plus noise."""
-        if f_mean is None:
-            f_mean = self.f_mean(parents)
+        if f_logits is None:
+            f_logits = self.f_logits(parents)
 
-        v_circ = self._combine_logits_and_noise(f_mean, u)
-        v_tilde = torch.softmax(v_circ / self.temperature, dim=-1)
+        v_circ = self._combine_logits_and_noise(f_logits, u)
+        v_tilde = torch.softmax(v_circ / self._temperature, dim=-1)
         indices = torch.argmax(v_circ, dim=-1)
         v_bar = torch.nn.functional.one_hot(
             indices, num_classes=v_circ.shape[-1]
@@ -60,10 +64,11 @@ class CategoricalVariable(Variable):
         self,
         num_samples: int,
         parents: dict[str, Tensor],
-        f_mean: Tensor | None = None,
+        f_logits: Tensor | None = None,
+        **kwargs: Tensor,
     ) -> Tensor:
         """Sample Gumbel noise for categorical structural equations."""
-        logits = self.f_mean(parents) if f_mean is None else f_mean
+        logits = self.f_logits(parents) if f_logits is None else f_logits
         if logits.ndim == 1:
             shape = (num_samples, logits.shape[0])
         elif logits.ndim >= 2:

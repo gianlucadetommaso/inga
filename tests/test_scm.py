@@ -208,7 +208,7 @@ class TestSEMGenerate:
             variables=[
                 CategoricalVariable(
                     name="X",
-                    f_mean=lambda _: torch.tensor([0.2, 1.1, -0.7]),
+                    f_logits=lambda _: torch.tensor([0.2, 1.1, -0.7]),
                 ),
             ]
         )
@@ -274,7 +274,7 @@ class TestSEMPosterior:
             variables=[
                 CategoricalVariable(
                     name="X",
-                    f_mean=lambda _: torch.tensor([0.4, -0.1, 0.8]),
+                    f_logits=lambda _: torch.tensor([0.4, -0.1, 0.8]),
                 ),
                 LinearVariable(
                     name="Y",
