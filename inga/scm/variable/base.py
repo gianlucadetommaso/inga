@@ -2,98 +2,84 @@
 
 from torch import Tensor
 from typing import Iterable
-from typing import cast
 
 
 class Variable:
     """A variable in a structural causal model.
 
-    A variable is defined by its name, parent variables, and optional noise
-    standard deviation.
+    A variable is defined by its name and parent variables.
 
     This base class is intentionally agnostic to the noise model. Subclasses
-    must implement both :meth:`f_mean` and :meth:`f`.
+    must implement :meth:`f` and :meth:`sample_noise`.
 
     Attributes:
         name: The variable's identifier.
         parent_names: Names of parent variables in the DAG.
-        sigma: Standard deviation of the additive noise term.
     """
 
     def __init__(
         self,
         name: str,
-        sigma: float | None = None,
         parent_names: Iterable[str] | None = None,
     ) -> None:
         """Initialize a variable.
 
         Args:
             name: The variable's identifier.
-            sigma: Standard deviation of the additive noise term. Optional when
-                only defining DAG structure.
             parent_names: Names of parent variables in the DAG. Defaults to empty list.
         """
         self.name = name
         self.parent_names = list(parent_names) if parent_names is not None else []
-        self.sigma = sigma
+        # Optional Gaussian scale parameter used by Gaussian-like subclasses.
+        # Kept on the base class for static typing convenience across generic
+        # SCM utilities that may access `sigma` after runtime validation.
+        self.sigma: float | None = None
 
     def f(
-        self, parents: dict[str, Tensor], u: Tensor, f_mean: Tensor | None = None
+        self,
+        parents: dict[str, Tensor],
+        u: Tensor,
     ) -> Tensor:
-        """Compute the variable value given parents and noise.
+        """Compute the variable value given parents and exogenous noise.
 
-        Subclasses are responsible for specifying the structural/noise model.
+        This base class intentionally does not define any structural equation.
+        Subclasses are responsible for specifying the full forward model.
         """
         raise NotImplementedError(
             f"Variable '{self.name}' has no noise model configured. "
             "Use a concrete subclass (e.g., GaussianVariable) and/or override `f`."
         )
 
-    def f_mean(self, parents: dict[str, Tensor]) -> Tensor:
-        """Compute the mean function (expected value given parents).
+    def sample_noise(
+        self,
+        num_samples: int,
+        parents: dict[str, Tensor],
+    ) -> Tensor:
+        """Sample exogenous noise for this variable.
 
-        Args:
-            parents: Dictionary mapping parent names to their tensor values.
-
-        Returns:
-            Mean function value.
-
-        Raises:
-            NotImplementedError: If no structural function is provided.
+        Subclasses should implement the distribution used for their structural
+        equations.
         """
         raise NotImplementedError(
-            f"Variable '{self.name}' has no structural function configured."
+            f"Variable '{self.name}' has no noise sampler configured."
         )
 
+    def f_mean(self, parents: dict[str, Tensor]) -> Tensor:
+        """Compute the deterministic mean component of the structural equation.
 
-class GaussianVariable(Variable):
-    """Variable with additive Gaussian noise.
+        Subclasses with additive-noise structure (e.g. GaussianVariable)
+        should implement this method.
+        """
+        raise NotImplementedError(
+            f"Variable '{self.name}' has no mean function configured."
+        )
 
-    The structural equation is:
+    def f_from_mean(self, f_mean: Tensor, u: Tensor) -> Tensor:
+        """Reconstruct value from mean and noise components.
 
-        value = f_mean(parents) + sigma * u
-
-    where ``u`` is standard normal noise and ``sigma`` is required.
-    """
-
-    def __init__(
-        self,
-        name: str,
-        sigma: float,
-        parent_names: Iterable[str] | None = None,
-    ) -> None:
-        if sigma is None:
-            raise ValueError(
-                f"GaussianVariable '{name}' requires `sigma` and it cannot be None."
-            )
-        super().__init__(name=name, sigma=sigma, parent_names=parent_names)
-
-    def f(
-        self, parents: dict[str, Tensor], u: Tensor, f_mean: Tensor | None = None
-    ) -> Tensor:
-        """Compute value from mean function and additive Gaussian noise."""
-        if f_mean is None:
-            f_mean = self.f_mean(parents)
-        sigma = cast(float, self.sigma)
-        return f_mean + sigma * u
+        Subclasses with additive-noise structure can override this for efficient
+        recomposition when mean is already available.
+        """
+        raise NotImplementedError(
+            f"Variable '{self.name}' cannot be reconstructed from mean and noise."
+        )

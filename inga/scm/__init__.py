@@ -12,7 +12,12 @@ from inga.scm.dataset import (
     generate_scm_dataset,
     load_scm_dataset,
 )
-from inga.scm.variable import GaussianVariable, LinearVariable, Variable
+from inga.scm.variable import (
+    CategoricalVariable,
+    GaussianVariable,
+    LinearVariable,
+    Variable,
+)
 
 __all__ = [
     "SCM",
@@ -28,5 +33,6 @@ __all__ = [
     "load_scm_dataset",
     "Variable",
     "GaussianVariable",
+    "CategoricalVariable",
     "LinearVariable",
 ]

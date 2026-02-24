@@ -6,7 +6,7 @@ from typing import Callable, Iterable
 
 from torch import Tensor
 
-from inga.scm.variable.base import GaussianVariable
+from inga.scm.variable.gaussian import GaussianVariable
 
 
 class FunctionalVariable(GaussianVariable):
@@ -52,7 +52,6 @@ class FunctionalVariable(GaussianVariable):
         self,
         parents: dict[str, Tensor],
         u: Tensor,
-        f_mean: Tensor | None = None,
     ) -> Tensor:
         """Compute variable values as functional mean plus scaled Gaussian noise."""
-        return super().f(parents=parents, u=u, f_mean=f_mean)
+        return super().f(parents=parents, u=u)
