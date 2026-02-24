@@ -11,9 +11,11 @@ from inga.scm.variable.functional import FunctionalVariable
 class ConcreteVariable(Variable):
     """Concrete implementation of Variable for testing."""
 
-    def f_mean(self, parents: dict[str, torch.Tensor]) -> torch.Tensor:
-        """Return zero tensor for testing."""
-        return torch.tensor(0.0)
+    def f(self, parents: dict[str, torch.Tensor], u: torch.Tensor) -> torch.Tensor:
+        return u
+
+    def sample_noise(self, num_samples: int, parents: dict[str, torch.Tensor]) -> torch.Tensor:
+        return torch.zeros(num_samples)
 
 
 class ConcreteGaussianVariable(GaussianVariable):
@@ -197,19 +199,18 @@ class TestLinearVariable:
         assert torch.allclose(result, expected)
 
     @pytest.mark.parametrize("sigma", [1.0, 2.0, 0.5])
-    def test_f_with_precomputed_f_mean(self, sigma: float) -> None:
-        """Test f uses precomputed f_mean when provided."""
+    def test_f_uses_internal_f_mean(self, sigma: float) -> None:
+        """Test f computes values from internal f_mean and noise."""
         var = LinearVariable(
             name="X",
             sigma=sigma,
             coefs={"Z": 1.0},
         )
 
-        precomputed_f_mean = torch.tensor([10.0, 20.0, 30.0])
         u = torch.tensor([1.0, 1.0, 1.0])
-        result = var.f({}, u, structural=precomputed_f_mean)
+        result = var.f({}, u)
 
-        expected = precomputed_f_mean + sigma * u
+        expected = sigma * u
         assert torch.allclose(result, expected)
 
     @pytest.mark.parametrize(
@@ -421,6 +422,6 @@ def test_gaussian_variable_sample_noise_shape() -> None:
             return torch.tensor(0.0)
 
     var = _TmpGaussian(name="X", sigma=1.0)
-    noise = var.sample_noise(num_samples=11, parents={}, structural=torch.tensor(0.0))
+    noise = var.sample_noise(num_samples=11, parents={})
     assert noise.shape == (11,)
     assert torch.isfinite(noise).all()

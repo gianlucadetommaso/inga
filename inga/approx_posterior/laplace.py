@@ -565,7 +565,7 @@ class LaplacePosterior:
                 u = (observed[name] - f_mean) / (sigma * obs_sigma_scale)
 
             else:
-                values[name] = variable.f(parents, u_latent[name], f_mean)
+                values[name] = variable.f(parents, u_latent[name])
                 u = u_latent[name]
 
             loss = loss + 0.5 * u**2

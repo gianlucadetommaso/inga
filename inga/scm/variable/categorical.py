@@ -41,19 +41,13 @@ class CategoricalVariable(Variable):
         """Compute logits from parent values."""
         return self._f_logits(parents)
 
-    def structural_term(self, parents: dict[str, Tensor]) -> Tensor:
-        """Precompute categorical structural term (logits) for reuse."""
-        return self.f_logits(parents)
-
     def f(
         self,
         parents: dict[str, Tensor],
         u: Tensor,
-        structural: Tensor | None = None,
     ) -> Tensor:
         """Compute straight-through one-hot values from logits plus noise."""
-        if structural is None:
-            structural = self.f_logits(parents)
+        structural = self.f_logits(parents)
 
         v_circ = self._combine_logits_and_noise(structural, u)
         v_tilde = torch.softmax(v_circ / self._temperature, dim=-1)
@@ -67,10 +61,9 @@ class CategoricalVariable(Variable):
         self,
         num_samples: int,
         parents: dict[str, Tensor],
-        structural: Tensor | None = None,
     ) -> Tensor:
         """Sample Gumbel noise for categorical structural equations."""
-        logits = self.f_logits(parents) if structural is None else structural
+        logits = self.f_logits(parents)
         if logits.ndim == 1:
             shape = (num_samples, logits.shape[0])
         elif logits.ndim >= 2:

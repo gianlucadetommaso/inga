@@ -42,7 +42,6 @@ class Variable:
         self,
         parents: dict[str, Tensor],
         u: Tensor,
-        structural: Tensor | None = None,
     ) -> Tensor:
         """Compute the variable value given parents and noise.
 
@@ -53,15 +52,10 @@ class Variable:
             "Use a concrete subclass (e.g., GaussianVariable) and/or override `f`."
         )
 
-    def structural_term(self, parents: dict[str, Tensor]) -> Tensor | None:
-        """Compute structural term reused across sampling and forward eval."""
-        return None
-
     def sample_noise(
         self,
         num_samples: int,
         parents: dict[str, Tensor],
-        structural: Tensor | None = None,
     ) -> Tensor:
         """Sample exogenous noise for this variable.
 
@@ -96,17 +90,12 @@ class GaussianVariable(Variable):
         super().__init__(name=name, sigma=sigma, parent_names=parent_names)
 
     def f(
-        self, parents: dict[str, Tensor], u: Tensor, structural: Tensor | None = None
+        self, parents: dict[str, Tensor], u: Tensor
     ) -> Tensor:
         """Compute value from mean function and additive Gaussian noise."""
-        if structural is None:
-            structural = self.f_mean(parents)
+        structural = self.f_mean(parents)
         sigma = cast(float, self.sigma)
         return structural + sigma * u
-
-    def structural_term(self, parents: dict[str, Tensor]) -> Tensor:
-        """Precompute Gaussian structural term for reuse."""
-        return self.f_mean(parents)
 
     def f_mean(self, parents: dict[str, Tensor]) -> Tensor:
         """Compute the mean function for Gaussian structural equations."""
@@ -118,11 +107,6 @@ class GaussianVariable(Variable):
         self,
         num_samples: int,
         parents: dict[str, Tensor],
-        structural: Tensor | None = None,
     ) -> Tensor:
         """Sample standard Gaussian noise."""
-        if structural is None:
-            raise ValueError(
-                "GaussianVariable.sample_noise requires structural term for dtype/device inference."
-            )
-        return torch.randn(num_samples, device=structural.device, dtype=structural.dtype)
+        return torch.randn(num_samples)

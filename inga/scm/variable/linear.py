@@ -91,7 +91,6 @@ class LinearVariable(GaussianVariable):
         self,
         parents: dict[str, Tensor],
         u: Tensor,
-        structural: Tensor | None = None,
     ) -> Tensor:
         """Compute variable values as linear mean plus scaled Gaussian noise."""
-        return super().f(parents=parents, u=u, structural=structural)
+        return super().f(parents=parents, u=u)

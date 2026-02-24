@@ -52,7 +52,6 @@ class FunctionalVariable(GaussianVariable):
         self,
         parents: dict[str, Tensor],
         u: Tensor,
-        structural: Tensor | None = None,
     ) -> Tensor:
         """Compute variable values as functional mean plus scaled Gaussian noise."""
-        return super().f(parents=parents, u=u, structural=structural)
+        return super().f(parents=parents, u=u)

@@ -42,9 +42,8 @@ class SCM(HTMLMixin, PlottingMixin, CausalBiasMixin):
                 for pa_name, parent in values.items()
                 if pa_name in variable.parent_names
             }
-            structural = variable.structural_term(parents)
-            noise = variable.sample_noise(num_samples, parents, structural=structural)
-            values[name] = variable.f(parents, noise, structural=structural)
+            noise = variable.sample_noise(num_samples, parents)
+            values[name] = variable.f(parents, noise)
         return values
 
     def posterior_predictive_samples(
