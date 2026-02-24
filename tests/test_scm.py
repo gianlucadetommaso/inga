@@ -4,6 +4,7 @@ import matplotlib
 import torch
 import pytest
 from inga.scm.variable.base import Variable
+from inga.scm.variable.categorical import CategoricalVariable
 from inga.scm.variable.linear import LinearVariable
 from inga.scm.base import SCM
 from inga.scm.random import (
@@ -19,6 +20,15 @@ matplotlib.use("Agg")
 class NonGaussianVariable(Variable):
     """Simple non-Gaussian variable used to test causal quantity guards."""
 
+    def __init__(
+        self,
+        name: str,
+        sigma: float,
+        parent_names: list[str] | None = None,
+    ) -> None:
+        super().__init__(name=name, parent_names=parent_names)
+        self.sigma = sigma
+
     def f_mean(self, parents: dict[str, torch.Tensor]) -> torch.Tensor:
         if not parents:
             return torch.tensor(0.0)
@@ -29,12 +39,17 @@ class NonGaussianVariable(Variable):
         self,
         parents: dict[str, torch.Tensor],
         u: torch.Tensor,
-        f_mean: torch.Tensor | None = None,
     ) -> torch.Tensor:
-        if f_mean is None:
-            f_mean = self.f_mean(parents)
+        f_mean = self.f_mean(parents)
         # Deliberately non-Gaussian behavior to represent another variable family.
         return f_mean + u**2
+
+    def sample_noise(
+        self,
+        num_samples: int,
+        parents: dict[str, torch.Tensor],
+    ) -> torch.Tensor:
+        return torch.randn(num_samples)
 
 
 @pytest.fixture
@@ -201,6 +216,23 @@ class TestSEMGenerate:
         assert values["Z"].shape == (1,)
         assert values["X"].shape == (1,)
 
+    def test_generate_with_categorical_variable_uses_categorical_sampling(self) -> None:
+        """Categorical nodes should generate one-hot vectors via their own sampler."""
+        scm = SCM(
+            variables=[
+                CategoricalVariable(
+                    name="X",
+                    f_logits=lambda _: torch.tensor([0.2, 1.1, -0.7]),
+                ),
+            ]
+        )
+
+        values = scm.generate(32)
+        x = values["X"]
+        assert x.shape == (32, 3)
+        assert torch.all((x == 0) | (x == 1))
+        assert torch.allclose(x.sum(dim=-1), torch.ones(32))
+
 
 class TestSEMPosterior:
     """Tests for SCM posterior inference."""
@@ -243,6 +275,31 @@ class TestSEMPosterior:
         )
         observed = {"X": torch.tensor([0.1, -0.2])}
         scm.posterior.fit(observed)
+
+        with pytest.raises(ValueError, match="supported only for SCMs"):
+            scm.causal_effect(observed, treatment_name="X", outcome_name="Y")
+
+        with pytest.raises(ValueError, match="supported only for SCMs"):
+            scm.causal_bias(observed, treatment_name="X", outcome_name="Y")
+
+    def test_causal_quantities_reject_categorical_variables(self) -> None:
+        """Causal quantities are currently unsupported when SCM includes categorical nodes."""
+        scm = SCM(
+            variables=[
+                CategoricalVariable(
+                    name="X",
+                    f_logits=lambda _: torch.tensor([0.4, -0.1, 0.8]),
+                ),
+                LinearVariable(
+                    name="Y",
+                    parent_names=["X"],
+                    sigma=1.0,
+                    coefs={"X": 1.0},
+                    intercept=0.0,
+                ),
+            ]
+        )
+        observed = {"X": torch.tensor([1.0, 0.0])}
 
         with pytest.raises(ValueError, match="supported only for SCMs"):
             scm.causal_effect(observed, treatment_name="X", outcome_name="Y")

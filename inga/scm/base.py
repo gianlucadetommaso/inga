@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import torch
 from torch import Tensor
 from typing import TYPE_CHECKING
 
@@ -42,7 +41,8 @@ class SCM(HTMLMixin, PlottingMixin, CausalBiasMixin):
                 for pa_name, parent in values.items()
                 if pa_name in variable.parent_names
             }
-            values[name] = variable.f(parents, torch.randn(num_samples))
+            noise = variable.sample_noise(num_samples, parents)
+            values[name] = variable.f(parents, noise)
         return values
 
     def posterior_predictive_samples(

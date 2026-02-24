@@ -2,7 +2,9 @@
 
 import pytest
 import torch
-from inga.scm.variable.base import GaussianVariable, Variable
+from inga.scm.variable.base import Variable
+from inga.scm.variable.gaussian import GaussianVariable
+from inga.scm.variable.categorical import CategoricalVariable
 from inga.scm.variable.linear import LinearVariable
 from inga.scm.variable.functional import FunctionalVariable
 
@@ -10,9 +12,13 @@ from inga.scm.variable.functional import FunctionalVariable
 class ConcreteVariable(Variable):
     """Concrete implementation of Variable for testing."""
 
-    def f_mean(self, parents: dict[str, torch.Tensor]) -> torch.Tensor:
-        """Return zero tensor for testing."""
-        return torch.tensor(0.0)
+    def f(self, parents: dict[str, torch.Tensor], u: torch.Tensor) -> torch.Tensor:
+        return u
+
+    def sample_noise(
+        self, num_samples: int, parents: dict[str, torch.Tensor]
+    ) -> torch.Tensor:
+        return torch.zeros(num_samples)
 
 
 class ConcreteGaussianVariable(GaussianVariable):
@@ -27,36 +33,36 @@ class TestVariable:
 
     def test_parent_names_defaults_to_empty_list(self) -> None:
         """Test that parent_names defaults to empty list when not provided."""
-        var = ConcreteVariable(name="X", sigma=1.0)
+        var = ConcreteVariable(name="X")
 
         assert var.parent_names == []
 
     def test_parent_names_none_becomes_empty_list(self) -> None:
         """Test that parent_names=None becomes empty list."""
-        var = ConcreteVariable(name="X", sigma=1.0, parent_names=None)
+        var = ConcreteVariable(name="X", parent_names=None)
 
         assert var.parent_names == []
 
     def test_parent_names_converted_to_list(self) -> None:
         """Test that parent_names iterable is converted to list."""
-        var = ConcreteVariable(name="X", sigma=1.0, parent_names=("A", "B"))
+        var = ConcreteVariable(name="X", parent_names=("A", "B"))
 
         assert var.parent_names == ["A", "B"]
         assert isinstance(var.parent_names, list)
 
-    def test_base_variable_f_mean_not_implemented(self) -> None:
-        """Bare Variable should not implement a mean function."""
-        var = Variable(name="X")
-
-        with pytest.raises(NotImplementedError, match="structural function"):
-            var.f_mean({})
-
     def test_base_variable_f_requires_f_mean(self) -> None:
         """Base Variable.f must be implemented by subclasses."""
-        var = Variable(name="X", sigma=1.0)
+        var = Variable(name="X")
 
         with pytest.raises(NotImplementedError, match="noise model"):
             var.f({}, torch.randn(3))
+
+    def test_base_variable_sample_noise_not_implemented(self) -> None:
+        """Base Variable.sample_noise must be implemented by subclasses."""
+        var = Variable(name="X")
+
+        with pytest.raises(NotImplementedError, match="noise sampler"):
+            var.sample_noise(3, {})
 
     def test_gaussian_variable_f_raises_without_sigma(self) -> None:
         """GaussianVariable requires sigma to be configured at init time."""
@@ -196,19 +202,18 @@ class TestLinearVariable:
         assert torch.allclose(result, expected)
 
     @pytest.mark.parametrize("sigma", [1.0, 2.0, 0.5])
-    def test_f_with_precomputed_f_mean(self, sigma: float) -> None:
-        """Test f uses precomputed f_mean when provided."""
+    def test_f_uses_internal_f_mean(self, sigma: float) -> None:
+        """Test f computes values from internal f_mean and noise."""
         var = LinearVariable(
             name="X",
             sigma=sigma,
             coefs={"Z": 1.0},
         )
 
-        precomputed_f_mean = torch.tensor([10.0, 20.0, 30.0])
         u = torch.tensor([1.0, 1.0, 1.0])
-        result = var.f({}, u, f_mean=precomputed_f_mean)
+        result = var.f({}, u)
 
-        expected = precomputed_f_mean + sigma * u
+        expected = sigma * u
         assert torch.allclose(result, expected)
 
     @pytest.mark.parametrize(
@@ -344,3 +349,115 @@ class TestFunctionalVariable:
 
         assert isinstance(linear, GaussianVariable)
         assert isinstance(functional, GaussianVariable)
+
+
+class TestCategoricalVariable:
+    """Tests for CategoricalVariable class."""
+
+    def test_init_uses_temperature_and_no_sigma(self) -> None:
+        """CategoricalVariable should use temperature."""
+        var = CategoricalVariable(
+            name="C", f_logits=lambda _: torch.tensor([0.0, 1.0]), temperature=0.2
+        )
+
+        assert var._temperature == pytest.approx(0.2)
+
+    def test_init_rejects_non_positive_temperature(self) -> None:
+        """Temperature must be strictly positive."""
+        with pytest.raises(ValueError, match="temperature"):
+            CategoricalVariable(
+                name="C",
+                f_logits=lambda _: torch.tensor([0.0, 1.0]),
+                temperature=0.0,
+            )
+
+    def test_forward_pass_is_one_hot_argmax(self) -> None:
+        """Forward values should be exact one-hot selections."""
+        var = CategoricalVariable(
+            name="C",
+            f_logits=lambda _: torch.tensor([0.1, 3.0, -1.0]),
+        )
+
+        out = var.f({}, torch.zeros(5))
+
+        assert out.shape == (5, 3)
+        expected = torch.tensor([0.0, 1.0, 0.0]).expand(5, 3)
+        assert torch.allclose(out, expected)
+
+    def test_backward_flows_through_softmax_relaxation(self) -> None:
+        """Gradient should match the straight-through softmax path."""
+        parent = torch.tensor([0.2], requires_grad=True)
+        var = CategoricalVariable(
+            name="C",
+            parent_names=["P"],
+            f_logits=lambda parents: torch.stack(
+                [
+                    parents["P"].squeeze(-1),
+                    -parents["P"].squeeze(-1),
+                ],
+                dim=-1,
+            ),
+        )
+
+        out = var.f({"P": parent}, torch.zeros_like(parent))
+        loss = out[..., 0].sum()
+        loss.backward()
+
+        assert parent.grad is not None
+        assert parent.grad.abs().item() > 0.0
+
+    def test_sample_noise_returns_gumbel_with_expected_shape(self) -> None:
+        """Categorical noise sampler should return finite Gumbel noise."""
+        var = CategoricalVariable(
+            name="C",
+            f_logits=lambda _: torch.tensor([0.2, 0.8, -0.4]),
+        )
+
+        noise = var.sample_noise(num_samples=7, parents={})
+        assert noise.shape == (7, 3)
+        assert torch.isfinite(noise).all()
+
+    def test_sampling_matches_softmax_distribution_from_logits(self) -> None:
+        """Argmax(logits + Gumbel) frequencies should match softmax(logits)."""
+        torch.manual_seed(0)
+        logits = torch.tensor([0.3, -0.4, 1.2])
+        probs = torch.softmax(logits, dim=0)
+
+        var = CategoricalVariable(
+            name="C",
+            f_logits=lambda _: logits,
+        )
+
+        num_samples = 20_000
+        noise = var.sample_noise(num_samples=num_samples, parents={})
+        samples = var.f({}, noise)
+
+        empirical = samples.float().mean(dim=0)
+        assert torch.allclose(empirical, probs, atol=0.02)
+
+
+def test_gaussian_variable_sample_noise_shape() -> None:
+    """Gaussian variables should sample standard normal noise."""
+
+    class _TmpGaussian(GaussianVariable):
+        def f_mean(self, parents: dict[str, torch.Tensor]) -> torch.Tensor:
+            return torch.tensor(0.0)
+
+    var = _TmpGaussian(name="X", sigma=1.0)
+    noise = var.sample_noise(num_samples=11, parents={})
+    assert noise.shape == (11,)
+    assert torch.isfinite(noise).all()
+
+
+def test_gaussian_variable_f_from_mean_uses_precomputed_mean() -> None:
+    """Fast-path should combine precomputed mean and noise without recomputing f_mean."""
+
+    class _TmpGaussian(GaussianVariable):
+        def f_mean(self, parents: dict[str, torch.Tensor]) -> torch.Tensor:
+            raise AssertionError("f_mean should not be called in this test")
+
+    var = _TmpGaussian(name="X", sigma=1.5)
+    f_mean = torch.tensor([1.0, -2.0])
+    u = torch.tensor([0.2, -0.4])
+    out = var.f_from_mean(f_mean=f_mean, u=u)
+    assert torch.allclose(out, torch.tensor([1.3, -2.6]))

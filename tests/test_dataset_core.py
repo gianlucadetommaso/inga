@@ -22,7 +22,8 @@ from inga.scm.variable.linear import LinearVariable
 
 class ConstantVariable(Variable):
     def __init__(self, name: str, sigma: float = 1.0) -> None:
-        super().__init__(name=name, sigma=sigma)
+        super().__init__(name=name)
+        self.sigma = sigma
 
     def f_mean(self, parents: dict[str, torch.Tensor]) -> torch.Tensor:
         return torch.tensor(0.0)

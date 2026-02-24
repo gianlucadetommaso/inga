@@ -3,7 +3,7 @@
 import torch
 from torch import Tensor
 from typing import Iterable
-from inga.scm.variable.base import GaussianVariable
+from inga.scm.variable.gaussian import GaussianVariable
 
 
 class LinearVariable(GaussianVariable):
@@ -91,7 +91,6 @@ class LinearVariable(GaussianVariable):
         self,
         parents: dict[str, Tensor],
         u: Tensor,
-        f_mean: Tensor | None = None,
     ) -> Tensor:
         """Compute variable values as linear mean plus scaled Gaussian noise."""
-        return super().f(parents=parents, u=u, f_mean=f_mean)
+        return super().f(parents=parents, u=u)

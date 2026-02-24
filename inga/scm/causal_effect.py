@@ -5,7 +5,7 @@ from torch.func import grad
 from functools import partial
 from typing import TYPE_CHECKING
 
-from inga.scm.variable.base import GaussianVariable
+from inga.scm.variable.gaussian import GaussianVariable
 
 if TYPE_CHECKING:
     from inga.scm.variable.base import Variable
@@ -269,7 +269,7 @@ class CausalEffectMixin:
                         "Set sigma to evaluate causal effects."
                     )
                 noise = ((mediator_observed[name] - f_mean) / sigma).detach()
-                values[name] = variable.f(parents, noise, f_mean=f_mean)
+                values[name] = variable.f_from_mean(f_mean=f_mean, u=noise)
             else:
                 values[name] = variable.f(parents, latent[name])
 
