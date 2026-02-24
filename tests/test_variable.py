@@ -15,7 +15,9 @@ class ConcreteVariable(Variable):
     def f(self, parents: dict[str, torch.Tensor], u: torch.Tensor) -> torch.Tensor:
         return u
 
-    def sample_noise(self, num_samples: int, parents: dict[str, torch.Tensor]) -> torch.Tensor:
+    def sample_noise(
+        self, num_samples: int, parents: dict[str, torch.Tensor]
+    ) -> torch.Tensor:
         return torch.zeros(num_samples)
 
 
@@ -354,7 +356,9 @@ class TestCategoricalVariable:
 
     def test_init_uses_temperature_and_no_sigma(self) -> None:
         """CategoricalVariable should use temperature."""
-        var = CategoricalVariable(name="C", f_logits=lambda _: torch.tensor([0.0, 1.0]), temperature=0.2)
+        var = CategoricalVariable(
+            name="C", f_logits=lambda _: torch.tensor([0.0, 1.0]), temperature=0.2
+        )
 
         assert var._temperature == pytest.approx(0.2)
 

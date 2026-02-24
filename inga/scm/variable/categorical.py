@@ -52,9 +52,9 @@ class CategoricalVariable(Variable):
         v_circ = self._combine_logits_and_noise(structural, u)
         v_tilde = torch.softmax(v_circ / self._temperature, dim=-1)
         indices = torch.argmax(v_circ, dim=-1)
-        v_bar = torch.nn.functional.one_hot(
-            indices, num_classes=v_circ.shape[-1]
-        ).to(v_tilde.dtype)
+        v_bar = torch.nn.functional.one_hot(indices, num_classes=v_circ.shape[-1]).to(
+            v_tilde.dtype
+        )
         return v_tilde + (v_bar - v_tilde).detach()
 
     def sample_noise(
