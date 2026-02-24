@@ -207,7 +207,7 @@ class TestLinearVariable:
 
         precomputed_f_mean = torch.tensor([10.0, 20.0, 30.0])
         u = torch.tensor([1.0, 1.0, 1.0])
-        result = var.f({}, u, f_mean=precomputed_f_mean)
+        result = var.f({}, u, structural=precomputed_f_mean)
 
         expected = precomputed_f_mean + sigma * u
         assert torch.allclose(result, expected)
@@ -421,6 +421,6 @@ def test_gaussian_variable_sample_noise_shape() -> None:
             return torch.tensor(0.0)
 
     var = _TmpGaussian(name="X", sigma=1.0)
-    noise = var.sample_noise(num_samples=11, parents={}, f_mean=torch.tensor(0.0))
+    noise = var.sample_noise(num_samples=11, parents={}, structural=torch.tensor(0.0))
     assert noise.shape == (11,)
     assert torch.isfinite(noise).all()

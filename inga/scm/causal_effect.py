@@ -269,7 +269,7 @@ class CausalEffectMixin:
                         "Set sigma to evaluate causal effects."
                     )
                 noise = ((mediator_observed[name] - f_mean) / sigma).detach()
-                values[name] = variable.f(parents, noise, f_mean=f_mean)
+                values[name] = variable.f(parents, noise, structural=f_mean)
             else:
                 values[name] = variable.f(parents, latent[name])
 

@@ -13,8 +13,7 @@ from inga.scm.dataset_core import (
 )
 from inga.scm.html import HTMLMixin
 from inga.scm.plotting import PlottingMixin
-from inga.scm.variable.base import GaussianVariable, Variable
-from inga.scm.variable.categorical import CategoricalVariable
+from inga.scm.variable.base import Variable
 
 if TYPE_CHECKING:
     from inga.scm.dataset_core import CausalQueryConfig, SCMDataset
@@ -43,17 +42,9 @@ class SCM(HTMLMixin, PlottingMixin, CausalBiasMixin):
                 for pa_name, parent in values.items()
                 if pa_name in variable.parent_names
             }
-            if isinstance(variable, GaussianVariable):
-                f_mean = variable.f_mean(parents)
-                noise = variable.sample_noise(num_samples, parents, f_mean=f_mean)
-                values[name] = variable.f(parents, noise, f_mean=f_mean)
-            elif isinstance(variable, CategoricalVariable):
-                f_logits = variable.f_logits(parents)
-                noise = variable.sample_noise(num_samples, parents, f_logits=f_logits)
-                values[name] = variable.f(parents, noise, f_logits=f_logits)
-            else:
-                noise = variable.sample_noise(num_samples, parents)
-                values[name] = variable.f(parents, noise)
+            structural = variable.structural_term(parents)
+            noise = variable.sample_noise(num_samples, parents, structural=structural)
+            values[name] = variable.f(parents, noise, structural=structural)
         return values
 
     def posterior_predictive_samples(

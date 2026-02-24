@@ -39,7 +39,10 @@ class Variable:
         self.sigma = sigma
 
     def f(
-        self, parents: dict[str, Tensor], u: Tensor, f_mean: Tensor | None = None
+        self,
+        parents: dict[str, Tensor],
+        u: Tensor,
+        structural: Tensor | None = None,
     ) -> Tensor:
         """Compute the variable value given parents and noise.
 
@@ -50,11 +53,15 @@ class Variable:
             "Use a concrete subclass (e.g., GaussianVariable) and/or override `f`."
         )
 
+    def structural_term(self, parents: dict[str, Tensor]) -> Tensor | None:
+        """Compute structural term reused across sampling and forward eval."""
+        return None
+
     def sample_noise(
         self,
         num_samples: int,
         parents: dict[str, Tensor],
-        **kwargs: Tensor,
+        structural: Tensor | None = None,
     ) -> Tensor:
         """Sample exogenous noise for this variable.
 
@@ -89,13 +96,17 @@ class GaussianVariable(Variable):
         super().__init__(name=name, sigma=sigma, parent_names=parent_names)
 
     def f(
-        self, parents: dict[str, Tensor], u: Tensor, f_mean: Tensor | None = None
+        self, parents: dict[str, Tensor], u: Tensor, structural: Tensor | None = None
     ) -> Tensor:
         """Compute value from mean function and additive Gaussian noise."""
-        if f_mean is None:
-            f_mean = self.f_mean(parents)
+        if structural is None:
+            structural = self.f_mean(parents)
         sigma = cast(float, self.sigma)
-        return f_mean + sigma * u
+        return structural + sigma * u
+
+    def structural_term(self, parents: dict[str, Tensor]) -> Tensor:
+        """Precompute Gaussian structural term for reuse."""
+        return self.f_mean(parents)
 
     def f_mean(self, parents: dict[str, Tensor]) -> Tensor:
         """Compute the mean function for Gaussian structural equations."""
@@ -107,11 +118,11 @@ class GaussianVariable(Variable):
         self,
         num_samples: int,
         parents: dict[str, Tensor],
-        f_mean: Tensor | None = None,
+        structural: Tensor | None = None,
     ) -> Tensor:
         """Sample standard Gaussian noise."""
-        if f_mean is None:
+        if structural is None:
             raise ValueError(
-                "GaussianVariable.sample_noise requires `f_mean` for dtype/device inference."
+                "GaussianVariable.sample_noise requires structural term for dtype/device inference."
             )
-        return torch.randn(num_samples, device=f_mean.device, dtype=f_mean.dtype)
+        return torch.randn(num_samples, device=structural.device, dtype=structural.dtype)
