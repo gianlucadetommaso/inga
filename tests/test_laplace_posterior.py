@@ -4,12 +4,35 @@ import torch
 from torch import Tensor
 import pytest
 from typing import Mapping
+from collections.abc import Callable
 from inga.scm.variable.base import Variable
+from inga.scm.variable.categorical import CategoricalVariable
 from inga.scm.variable.linear import LinearVariable
 from inga.scm.variable.functional import FunctionalVariable
 from inga.approx_posterior.laplace import LaplacePosterior, LaplacePosteriorState
 from inga.scm.base import SCM
 from inga.scm.random import RandomSCMConfig, random_scm, resolve_transforms
+
+
+class _ConcreteCategoricalVariable(CategoricalVariable):
+    """Concrete categorical variable for tests requiring explicit logits."""
+
+    def __init__(
+        self,
+        name: str,
+        f_logits: Callable[[dict[str, Tensor]], Tensor],
+        parent_names: list[str] | None = None,
+        temperature: float = 0.1,
+    ) -> None:
+        super().__init__(
+            name=name,
+            parent_names=parent_names,
+            temperature=temperature,
+        )
+        self._test_f_logits = f_logits
+
+    def f_logits(self, parents: dict[str, Tensor]) -> Tensor:
+        return self._test_f_logits(parents)
 
 
 @pytest.fixture
@@ -786,14 +809,12 @@ class TestLaplacePosteriorJacobianStandardization:
 
     def test_categorical_ggn_uses_logits_jhj_formula(self) -> None:
         """Categorical observed nodes should contribute J H J^T to GN Hessian."""
-        from inga.scm.variable.categorical import CategoricalVariable
-
         posterior = LaplacePosterior(
             variables={
                 "Z": LinearVariable(
                     name="Z", parent_names=[], sigma=1.0, coefs={}, intercept=0.0
                 ),
-                "C": CategoricalVariable(
+                "C": _ConcreteCategoricalVariable(
                     name="C",
                     f_logits=lambda p: torch.stack(
                         [p["Z"], -p["Z"], torch.zeros_like(p["Z"])], dim=-1
@@ -836,11 +857,9 @@ class TestLaplacePosteriorJacobianStandardization:
         self,
     ) -> None:
         """Latent prior diagonal should use variable-specific noise Hessian."""
-        from inga.scm.variable.categorical import CategoricalVariable
-
         posterior = LaplacePosterior(
             variables={
-                "C": CategoricalVariable(
+                "C": _ConcreteCategoricalVariable(
                     name="C",
                     f_logits=lambda _: torch.tensor([0.2, -0.3, 0.1]),
                 ),

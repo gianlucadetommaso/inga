@@ -9,11 +9,29 @@ import torch
 from torch import Tensor
 from torch.func import grad
 from functools import partial
+from typing import Callable
 import pytest
 from inga.scm.variable.linear import LinearVariable
 from inga.scm.variable.categorical import CategoricalVariable
 from inga.scm.variable.functional import FunctionalVariable
 from inga.scm.base import SCM
+
+
+class FunctionalCategoricalVariable(CategoricalVariable):
+    """Concrete categorical variable used in tests via overridden logits."""
+
+    def __init__(
+        self,
+        name: str,
+        f_logits: Callable[[dict[str, Tensor]], Tensor],
+        parent_names: list[str] | None = None,
+        temperature: float = 0.1,
+    ) -> None:
+        super().__init__(name=name, parent_names=parent_names, temperature=temperature)
+        self._f_logits_fn = f_logits
+
+    def f_logits(self, parents: dict[str, Tensor]) -> Tensor:
+        return self._f_logits_fn(parents)
 
 
 @pytest.fixture
@@ -761,7 +779,7 @@ class TestCausalBiasGeneralizedNoiseScore:
         """Mid-term should contract diff_term with categorical Gumbel score."""
         scm = SCM(
             variables=[
-                CategoricalVariable(
+                FunctionalCategoricalVariable(
                     name="C",
                     f_logits=lambda _: torch.tensor([0.4, -0.1, 0.8]),
                 ),
@@ -839,7 +857,7 @@ class TestCategoricalConfounderClosedForm:
 
         return SCM(
             variables=[
-                CategoricalVariable(
+                FunctionalCategoricalVariable(
                     name="C",
                     f_logits=lambda _: torch.tensor([0.0, 0.0]),
                 ),
@@ -942,7 +960,7 @@ class TestCategoricalOvercontrolAndSelectionModels:
 
         scm = SCM(
             variables=[
-                CategoricalVariable(
+                FunctionalCategoricalVariable(
                     name="C",
                     f_logits=lambda _: torch.tensor([0.0, 0.0]),
                 ),
@@ -996,7 +1014,7 @@ class TestCategoricalOvercontrolAndSelectionModels:
 
         scm = SCM(
             variables=[
-                CategoricalVariable(
+                FunctionalCategoricalVariable(
                     name="C",
                     f_logits=lambda _: torch.tensor([0.0, 0.0]),
                 ),
@@ -1052,7 +1070,7 @@ class TestCategoricalOvercontrolAndSelectionModels:
 
         scm = SCM(
             variables=[
-                CategoricalVariable(
+                FunctionalCategoricalVariable(
                     name="C",
                     f_logits=lambda _: torch.tensor([0.0, 0.0]),
                 ),
@@ -1114,7 +1132,7 @@ class TestCategoricalOvercontrolAndSelectionModels:
 
         scm = SCM(
             variables=[
-                CategoricalVariable(
+                FunctionalCategoricalVariable(
                     name="C",
                     f_logits=lambda _: torch.tensor([0.0, 0.0]),
                 ),

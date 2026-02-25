@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Callable, Iterable
+from typing import Iterable
 
 import torch
 import torch.nn.functional as F
@@ -28,19 +28,19 @@ class CategoricalVariable(Variable):
     def __init__(
         self,
         name: str,
-        f_logits: Callable[[dict[str, Tensor]], Tensor],
         parent_names: Iterable[str] | None = None,
         temperature: float = 0.1,
     ) -> None:
         if temperature <= 0:
             raise ValueError("`temperature` must be positive.")
         super().__init__(name=name, parent_names=parent_names)
-        self._f_logits = f_logits
         self._temperature = temperature
 
     def f_logits(self, parents: dict[str, Tensor]) -> Tensor:
         """Compute logits from parent values."""
-        return self._f_logits(parents)
+        raise NotImplementedError(
+            f"CategoricalVariable '{self.name}' has no structural logits function configured."
+        )
 
     def f(
         self,

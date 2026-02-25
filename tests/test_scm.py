@@ -3,6 +3,7 @@
 import matplotlib
 import torch
 import pytest
+from typing import Callable
 from inga.scm.variable.base import Variable
 from inga.scm.variable.categorical import CategoricalVariable
 from inga.scm.variable.linear import LinearVariable
@@ -50,6 +51,23 @@ class NonGaussianVariable(Variable):
         parents: dict[str, torch.Tensor],
     ) -> torch.Tensor:
         return torch.randn(num_samples)
+
+
+class FunctionalCategoricalVariable(CategoricalVariable):
+    """Concrete categorical variable used in tests via overridden logits."""
+
+    def __init__(
+        self,
+        name: str,
+        f_logits: Callable[[dict[str, torch.Tensor]], torch.Tensor],
+        parent_names: list[str] | None = None,
+        temperature: float = 0.1,
+    ) -> None:
+        super().__init__(name=name, parent_names=parent_names, temperature=temperature)
+        self._f_logits_fn = f_logits
+
+    def f_logits(self, parents: dict[str, torch.Tensor]) -> torch.Tensor:
+        return self._f_logits_fn(parents)
 
 
 @pytest.fixture
@@ -220,7 +238,7 @@ class TestSEMGenerate:
         """Categorical nodes should generate one-hot vectors via their own sampler."""
         scm = SCM(
             variables=[
-                CategoricalVariable(
+                FunctionalCategoricalVariable(
                     name="X",
                     f_logits=lambda _: torch.tensor([0.2, 1.1, -0.7]),
                 ),
@@ -282,7 +300,7 @@ class TestSEMPosterior:
         """Causal quantities should run when categorical nodes are present."""
         scm = SCM(
             variables=[
-                CategoricalVariable(
+                FunctionalCategoricalVariable(
                     name="C",
                     f_logits=lambda _: torch.tensor([0.4, -0.1, 0.8]),
                 ),
