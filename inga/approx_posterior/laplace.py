@@ -559,7 +559,6 @@ class LaplacePosterior:
                 for pa_name, parent in values.items()
                 if pa_name in variable.parent_names
             }
-            f_mean = variable.f_mean(parents)
 
             if name in observed:
                 values[name] = observed[name]

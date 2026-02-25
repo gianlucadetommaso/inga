@@ -42,10 +42,6 @@ class CategoricalVariable(Variable):
         """Compute logits from parent values."""
         return self._f_logits(parents)
 
-    def f_mean(self, parents: dict[str, Tensor]) -> Tensor:
-        """Return deterministic structural logits (pre-noise component)."""
-        return self.f_logits(parents)
-
     def f(
         self,
         parents: dict[str, Tensor],
@@ -145,6 +141,14 @@ class CategoricalVariable(Variable):
         eps = torch.finfo(logits.dtype).eps
         uniform = uniform.clamp(min=eps, max=1.0 - eps)
         return -torch.log(-torch.log(uniform))
+
+    def noise_score(self, u: Tensor) -> Tensor:
+        """Score function of standard Gumbel noise.
+
+        For ``p(u) = exp(-(u + exp(-u)))``, we have
+        ``∇u log p(u) = exp(-u) - 1``.
+        """
+        return torch.exp(-u) - 1.0
 
     @staticmethod
     def _combine_logits_and_noise(logits: Tensor, noise: Tensor) -> Tensor:

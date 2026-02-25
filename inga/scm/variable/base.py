@@ -104,3 +104,9 @@ class Variable:
         raise NotImplementedError(
             f"Variable '{self.name}' does not implement log-density evaluation."
         )
+
+    def noise_score(self, u: Tensor) -> Tensor:
+        """Score function of exogenous noise: ``∇_u log p(u)``."""
+        raise NotImplementedError(
+            f"Variable '{self.name}' does not implement a noise score function."
+        )

@@ -81,3 +81,7 @@ class GaussianVariable(Variable):
         while u_sq.ndim > 1:
             u_sq = u_sq.sum(dim=-1)
         return -0.5 * u_sq
+
+    def noise_score(self, u: Tensor) -> Tensor:
+        """Score function of standard Gaussian noise: ∇u log p(u) = -u."""
+        return -u

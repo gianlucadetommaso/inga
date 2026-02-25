@@ -11,6 +11,7 @@ from torch.func import grad
 from functools import partial
 import pytest
 from inga.scm.variable.linear import LinearVariable
+from inga.scm.variable.categorical import CategoricalVariable
 from inga.scm.base import SCM
 
 
@@ -750,3 +751,71 @@ class TestEndogenousSelectionModel:
         ), (
             f"mid_term mean should equal gamma/(1+gamma^2)={expected_mid_term}, got {mean_mid_term}"
         )
+
+
+class TestCausalBiasGeneralizedNoiseScore:
+    """Unit tests for generalized mid-term using noise score ∇u log p(u)."""
+
+    def test_mid_term_uses_gumbel_score_for_categorical_observed(self) -> None:
+        """Mid-term should contract diff_term with categorical Gumbel score."""
+        scm = SCM(
+            variables=[
+                CategoricalVariable(
+                    name="C",
+                    f_logits=lambda _: torch.tensor([0.4, -0.1, 0.8]),
+                ),
+                LinearVariable(
+                    name="X", parent_names=[], sigma=1.0, coefs={}, intercept=0.0
+                ),
+                LinearVariable(
+                    name="Y",
+                    parent_names=["X"],
+                    sigma=1.0,
+                    coefs={"X": 1.0},
+                    intercept=0.0,
+                ),
+            ]
+        )
+
+        # Provide a simple latent/observed assignment and an explicit outcome mean.
+        latent = {"X": torch.tensor(0.3), "Y": torch.tensor(-0.2)}
+        observed = {"C": torch.tensor([1.0, 0.0, 0.0]), "X": torch.tensor(0.1)}
+        outcome_mean = torch.tensor(0.0)
+
+        mid_term = scm._compute_mid_term(
+            latent=latent,
+            observed=observed,
+            outcome_mean=outcome_mean,
+            observed_name="C",
+            outcome_name="Y",
+        )
+
+        # Reconstruct expected term: diff_term @ score_u
+        c_var = scm._variables["C"]
+        assert isinstance(c_var, CategoricalVariable)
+        u_c = c_var.infer_noise(parents={}, observed=observed["C"])
+        score_u = c_var.noise_score(u_c)
+        # In _compute_mid_term, observed X is used when constructing parents for Y.
+        diff_term = (
+            scm._variables["Y"].f({"X": observed["X"]}, latent["Y"]) - outcome_mean
+        )
+        expected = diff_term * score_u
+
+        assert torch.allclose(mid_term, expected, atol=1e-6)
+
+    def test_mid_term_contraction_vector_vector_is_dot_product(self) -> None:
+        """Vector-vector mid-term contraction should be a dot product."""
+        scm = SCM(
+            variables=[
+                LinearVariable(
+                    name="X", parent_names=[], sigma=1.0, coefs={}, intercept=0.0
+                ),
+            ]
+        )
+
+        diff_term = torch.tensor([1.0, -2.0, 0.5])
+        score_u = torch.tensor([0.3, 0.4, -1.0])
+        mid = scm._mid_term_contraction(diff_term=diff_term, score_u=score_u)
+        expected = torch.dot(diff_term, score_u)
+
+        assert torch.allclose(mid, expected, atol=1e-8)

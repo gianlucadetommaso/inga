@@ -750,7 +750,9 @@ class TestLaplacePosteriorJacobianStandardization:
         """GN Hessian approximation should reject variable families not yet supported."""
 
         class UnsupportedVariable(Variable):
-            def __init__(self, name: str, parent_names: list[str] | None = None) -> None:
+            def __init__(
+                self, name: str, parent_names: list[str] | None = None
+            ) -> None:
                 super().__init__(name=name, parent_names=parent_names)
                 self.sigma = 1.0
 
@@ -762,7 +764,9 @@ class TestLaplacePosteriorJacobianStandardization:
             def f(self, parents: dict[str, Tensor], u: Tensor) -> Tensor:
                 return self.f_mean(parents) + u
 
-            def sample_noise(self, num_samples: int, parents: dict[str, Tensor]) -> Tensor:
+            def sample_noise(
+                self, num_samples: int, parents: dict[str, Tensor]
+            ) -> Tensor:
                 return torch.randn(num_samples)
 
         variables: dict[str, Variable] = {
@@ -771,7 +775,9 @@ class TestLaplacePosteriorJacobianStandardization:
         }
         posterior = LaplacePosterior(variables=variables)
 
-        with pytest.raises(ValueError, match="Hessian approximation is currently supported only"):
+        with pytest.raises(
+            ValueError, match="Hessian approximation is currently supported only"
+        ):
             posterior._approx_cov_chol(
                 u_latent_rav=torch.zeros(4, 1),
                 observed={"X": torch.zeros(4)},

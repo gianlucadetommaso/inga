@@ -9,6 +9,7 @@ from functools import partial
 from typing import TYPE_CHECKING
 
 from inga.scm.causal_effect import CausalEffectMixin
+from inga.scm.variable.categorical import CategoricalVariable
 
 if TYPE_CHECKING:
     from inga.scm.variable.base import Variable
@@ -157,8 +158,12 @@ class CausalBiasMixin(CausalEffectMixin):
                         latent=latent_per_obs,
                         observed=observed_per_obs,
                     )
-                    term = -(du_fy + mid_term) * dx_diff * inv_jacobian
-                    return self._reduce_sample_term(term)
+                    return self._contract_bias_components(
+                        du_fy=du_fy,
+                        mid_term=mid_term,
+                        inv_jacobian=inv_jacobian,
+                        dx_diff=dx_diff,
+                    )
 
                 return bias_contrib_per_observation(
                     latent_sample, observed, outcome_means
@@ -231,13 +236,17 @@ class CausalBiasMixin(CausalEffectMixin):
                     return 1.0 / jacobian
                 if jacobian.numel() == 1:
                     return 1.0 / jacobian.reshape(())
+                if jacobian.ndim == 1:
+                    eps = torch.finfo(jacobian.dtype).eps
+                    return torch.where(
+                        torch.abs(jacobian) > eps,
+                        1.0 / jacobian,
+                        torch.zeros_like(jacobian),
+                    )
 
-                # Vector-valued variables (e.g. categorical one-hot) induce
-                # matrix Jacobians; use a stable scalar proxy based on the
-                # average Jacobian magnitude.
-                scale = torch.mean(torch.abs(jacobian))
-                eps = torch.finfo(scale.dtype).eps
-                return 1.0 / torch.clamp(scale, min=eps)
+                # For vector-valued observed variables, use a stable
+                # (pseudo-)inverse Jacobian.
+                return torch.linalg.pinv(jacobian)
 
             if name in observed:
                 values[name] = observed[name]
@@ -260,7 +269,11 @@ class CausalBiasMixin(CausalEffectMixin):
             parents = self._get_parent_values(variable, values)
 
             if name == target_name:
-                target = variable.f_mean(parents)
+                target = (
+                    variable.f_logits(parents)
+                    if isinstance(variable, CategoricalVariable)
+                    else variable.f_mean(parents)
+                )
                 return target if target.ndim == 0 else target.sum()
             if name == treatment_name:
                 values[name] = treatment
@@ -285,7 +298,9 @@ class CausalBiasMixin(CausalEffectMixin):
 
             if name in observed:
                 if name == observed_name:
-                    return variable.infer_noise(parents=parents, observed=observed[name])
+                    return variable.infer_noise(
+                        parents=parents, observed=observed[name]
+                    )
                 values[name] = observed[name]
             else:
                 values[name] = variable.f(parents, latent[name])
@@ -338,7 +353,7 @@ class CausalBiasMixin(CausalEffectMixin):
     ) -> Tensor:
         """Compute the mid-term component for a given observed variable."""
         values: dict[str, Tensor] = {}
-        u_observed: Tensor | None = None
+        score_u_observed: Tensor | None = None
         diff_term: Tensor | None = None
 
         for name, variable in self._variables.items():
@@ -350,6 +365,7 @@ class CausalBiasMixin(CausalEffectMixin):
                         parents=parents,
                         observed=observed[name],
                     )
+                    score_u_observed = variable.noise_score(u_observed)
                 values[name] = observed[name]
             else:
                 values[name] = variable.f(parents, latent[name])
@@ -357,12 +373,53 @@ class CausalBiasMixin(CausalEffectMixin):
             if name == outcome_name:
                 diff_term = variable.f(parents, latent[name]) - outcome_mean
 
-            if u_observed is not None and diff_term is not None:
-                return -diff_term * u_observed
+            if score_u_observed is not None and diff_term is not None:
+                return self._mid_term_contraction(
+                    diff_term=diff_term,
+                    score_u=score_u_observed,
+                )
 
         raise ValueError(
             f"Outcome variable '{outcome_name}' or observed variable '{observed_name}' not found in the SCM."
         )
+
+    def _contract_bias_components(
+        self,
+        du_fy: Tensor,
+        mid_term: Tensor,
+        inv_jacobian: Tensor,
+        dx_diff: Tensor,
+    ) -> Tensor:
+        """Contract bias terms using linear-algebra products when available.
+
+        Intended form is ``-(du_fy + mid_term) @ inv_jacobian @ dx_diff``.
+        Falls back to elementwise multiplication when one of the operands is
+        scalar.
+        """
+        left = du_fy + mid_term
+
+        if inv_jacobian.ndim >= 2 and left.ndim >= 1:
+            left = torch.matmul(left, inv_jacobian)
+        else:
+            left = left * inv_jacobian
+
+        if left.ndim >= 1 and dx_diff.ndim >= 1:
+            contracted = torch.matmul(left, dx_diff)
+        else:
+            contracted = left * dx_diff
+
+        return -self._reduce_sample_term(contracted)
+
+    def _mid_term_contraction(self, diff_term: Tensor, score_u: Tensor) -> Tensor:
+        """Compute ``diff_term @ ∇u log p(u)`` with matrix-aware contraction."""
+        if diff_term.ndim >= 2 and score_u.ndim >= 1:
+            return torch.matmul(diff_term, score_u)
+
+        if diff_term.ndim >= 1 and score_u.ndim >= 1:
+            # Vector-vector contraction (dot product).
+            return torch.matmul(diff_term, score_u)
+
+        return diff_term * score_u
 
     def _compute_outcome_mean_from_noise(
         self,
@@ -380,7 +437,12 @@ class CausalBiasMixin(CausalEffectMixin):
             parents = self._get_parent_values(variable, values)
 
             if name == outcome_name:
-                return variable.f_mean(parents)
+                out = (
+                    variable.f_logits(parents)
+                    if isinstance(variable, CategoricalVariable)
+                    else variable.f_mean(parents)
+                )
+                return out if out.ndim == 0 else out.sum()
 
             if name == treatment_name:
                 values[name] = observed[treatment_name]
@@ -389,7 +451,11 @@ class CausalBiasMixin(CausalEffectMixin):
             elif name in latent:
                 values[name] = variable.f(parents, latent[name])
             else:
-                f_mean = variable.f_mean(parents)
+                f_mean = (
+                    variable.f_logits(parents)
+                    if isinstance(variable, CategoricalVariable)
+                    else variable.f_mean(parents)
+                )
                 residual = variable.infer_noise(
                     parents=parents,
                     observed=observed[name],

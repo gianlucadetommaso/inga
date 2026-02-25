@@ -255,14 +255,23 @@ class CausalEffectMixin:
             if name == treatment_name:
                 values[name] = treatment
             elif name == outcome_name:
-                return variable.f_mean(parents)
+                out = (
+                    variable.f_logits(parents)
+                    if isinstance(variable, CategoricalVariable)
+                    else variable.f_mean(parents)
+                )
+                return out if out.ndim == 0 else out.sum()
             elif name in observed:
                 values[name] = observed[name]
             elif name in mediator_observed:
                 # Compute noise from observed mediator value (detached from gradient)
                 # and use it to reconstruct the counterfactual mediator under intervention.
                 # The noise is detached so the gradient flows only through f_mean.
-                f_mean = variable.f_mean(parents)
+                f_mean = (
+                    variable.f_logits(parents)
+                    if isinstance(variable, CategoricalVariable)
+                    else variable.f_mean(parents)
+                )
                 noise = variable.infer_noise(
                     parents=parents,
                     observed=mediator_observed[name],

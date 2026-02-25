@@ -20,6 +20,9 @@ class ConcreteVariable(Variable):
     ) -> torch.Tensor:
         return torch.zeros(num_samples)
 
+    def noise_score(self, u: torch.Tensor) -> torch.Tensor:
+        return torch.zeros_like(u)
+
 
 class ConcreteGaussianVariable(GaussianVariable):
     """Concrete Gaussian variable for testing Gaussian base behavior."""
@@ -461,3 +464,27 @@ def test_gaussian_variable_f_from_mean_uses_precomputed_mean() -> None:
     u = torch.tensor([0.2, -0.4])
     out = var.f_from_mean(f_mean=f_mean, u=u)
     assert torch.allclose(out, torch.tensor([1.3, -2.6]))
+
+
+def test_gaussian_variable_noise_score_is_negative_u() -> None:
+    """Gaussian score should be ∇u log p(u) = -u."""
+
+    class _TmpGaussian(GaussianVariable):
+        def f_mean(self, parents: dict[str, torch.Tensor]) -> torch.Tensor:
+            return torch.tensor(0.0)
+
+    var = _TmpGaussian(name="X", sigma=1.0)
+    u = torch.tensor([0.2, -1.5, 3.0])
+    assert torch.allclose(var.noise_score(u), -u)
+
+
+def test_categorical_variable_noise_score_matches_gumbel_formula() -> None:
+    """Gumbel score should be exp(-u) - 1 elementwise."""
+    var = CategoricalVariable(
+        name="C",
+        f_logits=lambda _: torch.tensor([0.2, 0.8, -0.4]),
+    )
+
+    u = torch.tensor([[0.0, 1.0, -1.0], [2.0, -0.5, 0.3]])
+    expected = torch.exp(-u) - 1.0
+    assert torch.allclose(var.noise_score(u), expected)
