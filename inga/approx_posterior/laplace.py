@@ -6,11 +6,13 @@ distribution over latent noise variables given observations.
 
 import torch
 from torch import Tensor, no_grad, vmap, nn
-from torch.func import grad
+from torch.func import grad, jacrev
 from dataclasses import dataclass
 from functools import partial
 from typing import Mapping
 from inga.scm.variable.base import Variable
+from inga.scm.variable.gaussian import GaussianVariable
+from inga.scm.variable.categorical import CategoricalVariable
 
 
 @dataclass
@@ -603,6 +605,18 @@ class LaplacePosterior:
         Raises:
             ValueError: If dimensions of u_latent_rav don't match latent_names.
         """
+        unsupported = [
+            name
+            for name, variable in self._variables.items()
+            if not isinstance(variable, (GaussianVariable, CategoricalVariable))
+        ]
+        if unsupported:
+            raise ValueError(
+                "Hessian approximation is currently supported only for "
+                "GaussianVariable/CategoricalVariable nodes. "
+                f"Found unsupported variables: {sorted(unsupported)}."
+            )
+
         latent_dim = len(latent_names)
         if u_latent_rav.shape[1] != latent_dim:
             raise ValueError(
@@ -634,6 +648,30 @@ class LaplacePosterior:
         )
 
         for observed_name in observed_h:
+            observed_variable = self._variables[observed_name]
+
+            if isinstance(observed_variable, CategoricalVariable):
+                f_logits_wrt_u = partial(
+                    self._f_logits_u,
+                    observed_name=observed_name,
+                    latent_names=latent_names,
+                )
+
+                logits = vmap(lambda u, o: f_logits_wrt_u(u, observed=o))(
+                    u_latent_rav_h,
+                    observed_h,
+                ).to(dtype=hessian_dtype)
+                jacobian = vmap(
+                    lambda u, o: jacrev(partial(f_logits_wrt_u, observed=o))(u)
+                )(u_latent_rav_h, observed_h).to(dtype=hessian_dtype)
+
+                probs = torch.softmax(logits, dim=-1)
+                fisher = torch.diag_embed(probs) - probs[:, :, None] * probs[:, None, :]
+                gn_hessian_rav += torch.einsum(
+                    "nci,ncd,ndj->nij", jacobian, fisher, jacobian
+                )
+                continue
+
             f_mean_wrt_u = partial(
                 self._f_mean_u,
                 observed_name=observed_name,
@@ -651,7 +689,7 @@ class LaplacePosterior:
             scale = torch.sqrt(1.0 + (g_norm / self._jacobian_norm_cap) ** 2)
             g = g / scale[:, None]
 
-            sigma_obs = self._variables[observed_name].sigma
+            sigma_obs = observed_variable.sigma
             obs_scale = 1.0 if sigma_obs is None else sigma_obs**2
             gn_hessian_rav += g[:, None] * g[:, :, None] / obs_scale
 
@@ -720,6 +758,37 @@ class LaplacePosterior:
                 if name == observed_name:
                     value = self._variables[name].f_mean(parents)
                     return value if value.ndim == 0 else value.sum()
+
+                values[name] = observed[name]
+            else:
+                values[name] = variable.f(parents, u_latent[name])
+
+        raise ValueError(f"Observed variable '{observed_name}' not found in the SCM.")
+
+    def _f_logits_u(
+        self,
+        u_latent_rav: Tensor,
+        observed: dict[str, Tensor],
+        observed_name: str,
+        latent_names: list[str],
+    ) -> Tensor:
+        """Compute logits of a categorical observed variable as function of latent noise."""
+        u_latent = self._unravel(u_latent_rav, latent_names)
+        values: dict[str, Tensor] = {}
+
+        for name, variable in self._variables.items():
+            parents = {
+                parent_name: values[parent_name]
+                for parent_name in variable.parent_names
+            }
+
+            if name in observed:
+                if name == observed_name:
+                    if not isinstance(variable, CategoricalVariable):
+                        raise ValueError(
+                            f"Observed variable '{observed_name}' is not categorical."
+                        )
+                    return variable.f_logits(parents)
 
                 values[name] = observed[name]
             else:
