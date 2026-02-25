@@ -99,3 +99,23 @@ class Variable:
                 f"Variable '{self.name}' does not implement noise inversion."
             )
         return (observed - self.f_mean(parents)) / self.sigma
+
+    def log_pdf(
+        self,
+        parents: dict[str, Tensor],
+        observed: Tensor,
+        noise_scale: float = 1.0,
+    ) -> Tensor:
+        """Log density of observed values under the structural distribution.
+
+        The default implementation uses the inferred noise and assumes a
+        standard-normal density in noise space, which recovers the MSE-like
+        objective used for Gaussian additive-noise models (up to constants).
+        """
+        u = self.infer_noise(parents=parents, observed=observed)
+        if noise_scale != 1.0:
+            u = u / noise_scale
+        u_sq = u**2
+        while u_sq.ndim > 1:
+            u_sq = u_sq.sum(dim=-1)
+        return -0.5 * u_sq

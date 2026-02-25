@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Callable, Iterable
 
 import torch
+import torch.nn.functional as F
 from torch import Tensor
 
 from inga.scm.variable.base import Variable
@@ -96,6 +97,32 @@ class CategoricalVariable(Variable):
         """
         logits = self.f_logits(parents)
         return observed.to(dtype=logits.dtype, device=logits.device) - logits
+
+    def log_pdf(
+        self,
+        parents: dict[str, Tensor],
+        observed: Tensor,
+        noise_scale: float = 1.0,
+    ) -> Tensor:
+        """Categorical log density (negative cross-entropy, per sample)."""
+        logits = self.f_logits(parents)
+        target = observed
+
+        if logits.ndim == 1:
+            logits = logits.unsqueeze(0).expand(len(target), -1)
+
+        if target.shape == logits.shape:
+            log_probs = torch.log_softmax(logits, dim=-1)
+            nll = -(target.to(log_probs.dtype) * log_probs).sum(dim=-1)
+        else:
+            target_idx = target.long()
+            if target_idx.ndim == logits.ndim:
+                target_idx = target_idx.squeeze(-1)
+            nll = F.cross_entropy(logits, target_idx, reduction="none")
+
+        if noise_scale != 1.0:
+            nll = nll / noise_scale
+        return -nll
 
     def sample_noise(
         self,

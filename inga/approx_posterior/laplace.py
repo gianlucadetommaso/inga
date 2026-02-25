@@ -469,14 +469,14 @@ class LaplacePosterior:
             scheduler = torch.optim.lr_scheduler.ExponentialLR(
                 adam, gamma=self._adam_scheduler_gamma
             )
-        for idx, obs_sigma_scale in enumerate(self._continuation_scales):
+        for idx, obs_noise_scale in enumerate(self._continuation_scales):
             radius = self._latent_trust_radii[
                 min(idx, len(self._latent_trust_radii) - 1)
             ]
             for _ in range(self._continuation_steps):
                 adam.zero_grad()
                 loss = self._posterior_loss_fn(
-                    bounded_u(radius), observed_opt, obs_sigma_scale=obs_sigma_scale
+                    bounded_u(radius), observed_opt, obs_noise_scale=obs_noise_scale
                 ).mean()
                 loss.backward()
                 adam.step()
@@ -498,7 +498,7 @@ class LaplacePosterior:
         def closure() -> Tensor:
             optimizer.zero_grad()
             loss = self._posterior_loss_fn(
-                bounded_u(final_radius), observed_opt, obs_sigma_scale=1.0
+                bounded_u(final_radius), observed_opt, obs_noise_scale=1.0
             ).mean()
             loss.backward()
             return loss
@@ -526,7 +526,7 @@ class LaplacePosterior:
         self,
         u_latent: Mapping[str, Tensor],
         observed: dict[str, Tensor],
-        obs_sigma_scale: float = 1.0,
+        obs_noise_scale: float = 1.0,
     ) -> Tensor:
         """Compute per-sample negative log posterior values.
 
@@ -537,7 +537,7 @@ class LaplacePosterior:
         Args:
             u_latent: Dictionary of latent noise values/parameters.
             observed: Dictionary of observed variable values.
-            obs_sigma_scale: Multiplicative scale on observed-noise std used
+            obs_noise_scale: Multiplicative scale on observed-noise terms used
                 during continuation warm-start (1.0 = true objective).
 
         Returns:
@@ -561,9 +561,12 @@ class LaplacePosterior:
 
             if name in observed:
                 values[name] = observed[name]
-                u = variable.infer_noise(parents=parents, observed=observed[name])
-                if obs_sigma_scale != 1.0:
-                    u = u / obs_sigma_scale
+                loss = loss - variable.log_pdf(
+                    parents=parents,
+                    observed=observed[name],
+                    noise_scale=obs_noise_scale,
+                )
+                continue
 
             else:
                 values[name] = variable.f(parents, u_latent[name])
