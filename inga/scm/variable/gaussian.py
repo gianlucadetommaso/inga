@@ -57,3 +57,12 @@ class GaussianVariable(Variable):
     ) -> Tensor:
         """Sample standard Gaussian noise."""
         return torch.randn(num_samples)
+
+    def infer_noise(
+        self,
+        parents: dict[str, Tensor],
+        observed: Tensor,
+    ) -> Tensor:
+        """Infer additive Gaussian noise from observed values."""
+        sigma = cast(float, self.sigma)
+        return (observed - self.f_mean(parents)) / sigma

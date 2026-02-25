@@ -41,6 +41,10 @@ class CategoricalVariable(Variable):
         """Compute logits from parent values."""
         return self._f_logits(parents)
 
+    def f_mean(self, parents: dict[str, Tensor]) -> Tensor:
+        """Return deterministic structural logits (pre-noise component)."""
+        return self.f_logits(parents)
+
     def f(
         self,
         parents: dict[str, Tensor],
@@ -51,11 +55,47 @@ class CategoricalVariable(Variable):
 
         v_circ = self._combine_logits_and_noise(structural, u)
         v_tilde = torch.softmax(v_circ / self._temperature, dim=-1)
-        indices = torch.argmax(v_circ, dim=-1)
-        v_bar = torch.nn.functional.one_hot(indices, num_classes=v_circ.shape[-1]).to(
-            v_tilde.dtype
-        )
-        return v_tilde + (v_bar - v_tilde).detach()
+        if u.requires_grad:
+            return v_tilde
+        try:
+            indices = torch.argmax(v_circ, dim=-1)
+            v_bar = torch.nn.functional.one_hot(
+                indices,
+                num_classes=v_circ.shape[-1],
+            ).to(v_tilde.dtype)
+            return v_tilde + (v_bar - v_tilde).detach()
+        except RuntimeError as exc:
+            if "vmap" in str(exc):
+                return v_tilde
+            raise
+
+    def f_from_mean(self, f_mean: Tensor, u: Tensor) -> Tensor:
+        """Reconstruct straight-through categorical values from logits and noise."""
+        v_circ = self._combine_logits_and_noise(f_mean, u)
+        v_tilde = torch.softmax(v_circ / self._temperature, dim=-1)
+        if u.requires_grad:
+            return v_tilde
+        try:
+            indices = torch.argmax(v_circ, dim=-1)
+            v_bar = torch.nn.functional.one_hot(
+                indices,
+                num_classes=v_circ.shape[-1],
+            ).to(v_tilde.dtype)
+            return v_tilde + (v_bar - v_tilde).detach()
+        except RuntimeError as exc:
+            if "vmap" in str(exc):
+                return v_tilde
+            raise
+
+    def infer_noise(self, parents: dict[str, Tensor], observed: Tensor) -> Tensor:
+        """Infer a surrogate exogenous noise matching observed categorical values.
+
+        The inversion is not unique for categorical variables. We use a stable
+        surrogate in the logits space to support downstream differentiable
+        routines that require a noise value.
+        """
+        logits = self.f_logits(parents)
+        return observed.to(dtype=logits.dtype, device=logits.device) - logits
 
     def sample_noise(
         self,

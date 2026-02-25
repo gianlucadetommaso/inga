@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import torch
 from torch import Tensor, vmap, no_grad
-from torch.func import grad
+from torch.func import grad, jacrev
 from functools import partial
 from typing import TYPE_CHECKING
 
@@ -28,6 +28,13 @@ class CausalBiasMixin(CausalEffectMixin):
 
     _variables: "dict[str, Variable]"
     posterior: "LaplacePosterior"
+
+    @staticmethod
+    def _reduce_sample_term(term: Tensor) -> Tensor:
+        """Reduce non-scalar per-sample terms to a scalar contribution."""
+        if term.ndim == 0:
+            return term
+        return term.reshape(-1).sum()
 
     def causal_bias(
         self,
@@ -145,13 +152,13 @@ class CausalBiasMixin(CausalEffectMixin):
                         outcome_name=outcome_name,
                     )
 
-                    sigma = self._variables[observed_name].sigma
-                    if sigma is None:
-                        raise ValueError(
-                            f"Variable '{observed_name}' has no sigma configured. "
-                            "Set sigma to evaluate causal bias."
-                        )
-                    return -(du_fy + mid_term) * dx_diff / sigma
+                    inv_jacobian = self._compute_inverse_jacobian_wrt_noise(
+                        observed_name=observed_name,
+                        latent=latent_per_obs,
+                        observed=observed_per_obs,
+                    )
+                    term = -(du_fy + mid_term) * dx_diff * inv_jacobian
+                    return self._reduce_sample_term(term)
 
                 return bias_contrib_per_observation(
                     latent_sample, observed, outcome_means
@@ -201,6 +208,44 @@ class CausalBiasMixin(CausalEffectMixin):
         noise = self._get_u_observed(latent, observed, observed_name)
         return grad(f_mean_u)(noise)
 
+    def _compute_inverse_jacobian_wrt_noise(
+        self,
+        observed_name: str,
+        latent: dict[str, Tensor],
+        observed: dict[str, Tensor],
+    ) -> Tensor:
+        """Compute ``(∂f/∂u)^(-1)`` for an observed variable.
+
+        For additive Gaussian variables this matches ``1 / sigma``.
+        """
+        values: dict[str, Tensor] = {}
+        u_observed = self._get_u_observed(latent, observed, observed_name)
+
+        for name, variable in self._variables.items():
+            parents = self._get_parent_values(variable, values)
+
+            if name == observed_name:
+                jacobian = jacrev(partial(variable.f, parents))(u_observed)
+
+                if jacobian.ndim == 0:
+                    return 1.0 / jacobian
+                if jacobian.numel() == 1:
+                    return 1.0 / jacobian.reshape(())
+
+                # Vector-valued variables (e.g. categorical one-hot) induce
+                # matrix Jacobians; use a stable scalar proxy based on the
+                # average Jacobian magnitude.
+                scale = torch.mean(torch.abs(jacobian))
+                eps = torch.finfo(scale.dtype).eps
+                return 1.0 / torch.clamp(scale, min=eps)
+
+            if name in observed:
+                values[name] = observed[name]
+            else:
+                values[name] = variable.f(parents, latent[name])
+
+        raise ValueError(f"Observed variable '{observed_name}' not found in the SCM.")
+
     def _compute_target_mean(
         self,
         treatment: Tensor,
@@ -215,7 +260,8 @@ class CausalBiasMixin(CausalEffectMixin):
             parents = self._get_parent_values(variable, values)
 
             if name == target_name:
-                return variable.f_mean(parents)
+                target = variable.f_mean(parents)
+                return target if target.ndim == 0 else target.sum()
             if name == treatment_name:
                 values[name] = treatment
             elif name in observed:
@@ -236,17 +282,10 @@ class CausalBiasMixin(CausalEffectMixin):
 
         for name, variable in self._variables.items():
             parents = self._get_parent_values(variable, values)
-            f_mean = variable.f_mean(parents)
 
             if name in observed:
                 if name == observed_name:
-                    sigma = variable.sigma
-                    if sigma is None:
-                        raise ValueError(
-                            f"Variable '{name}' has no sigma configured. "
-                            "Set sigma to evaluate causal bias."
-                        )
-                    return (observed[name] - f_mean) / sigma
+                    return variable.infer_noise(parents=parents, observed=observed[name])
                 values[name] = observed[name]
             else:
                 values[name] = variable.f(parents, latent[name])
@@ -306,15 +345,11 @@ class CausalBiasMixin(CausalEffectMixin):
             parents = self._get_parent_values(variable, values)
 
             if name in observed:
-                f_mean = variable.f_mean(parents)
                 if name == observed_name:
-                    sigma = variable.sigma
-                    if sigma is None:
-                        raise ValueError(
-                            f"Variable '{name}' has no sigma configured. "
-                            "Set sigma to evaluate causal bias."
-                        )
-                    u_observed = (observed[name] - f_mean) / sigma
+                    u_observed = variable.infer_noise(
+                        parents=parents,
+                        observed=observed[name],
+                    )
                 values[name] = observed[name]
             else:
                 values[name] = variable.f(parents, latent[name])
@@ -355,13 +390,10 @@ class CausalBiasMixin(CausalEffectMixin):
                 values[name] = variable.f(parents, latent[name])
             else:
                 f_mean = variable.f_mean(parents)
-                sigma = variable.sigma
-                if sigma is None:
-                    raise ValueError(
-                        f"Variable '{name}' has no sigma configured. "
-                        "Set sigma to evaluate causal bias."
-                    )
-                residual = ((observed[name] - f_mean) / sigma).detach()
+                residual = variable.infer_noise(
+                    parents=parents,
+                    observed=observed[name],
+                ).detach()
                 values[name] = variable.f_from_mean(f_mean=f_mean, u=residual)
 
         raise ValueError(f"Outcome variable '{outcome_name}' not found in the SCM.")

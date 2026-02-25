@@ -544,7 +544,12 @@ class LaplacePosterior:
             Tensor of shape (batch_size,) with per-sample posterior losses.
         """
         values: dict[str, Tensor] = {}
-        loss = torch.zeros_like(next(iter(observed.values())))
+        reference = next(iter(observed.values()))
+        loss = torch.zeros(
+            len(reference),
+            device=reference.device,
+            dtype=reference.dtype,
+        )
 
         for name, variable in self._variables.items():
             parents = {
@@ -556,19 +561,18 @@ class LaplacePosterior:
 
             if name in observed:
                 values[name] = observed[name]
-                sigma = variable.sigma
-                if sigma is None:
-                    raise ValueError(
-                        f"Variable '{name}' has no sigma configured. "
-                        "Set sigma to evaluate posterior losses."
-                    )
-                u = (observed[name] - f_mean) / (sigma * obs_sigma_scale)
+                u = variable.infer_noise(parents=parents, observed=observed[name])
+                if obs_sigma_scale != 1.0:
+                    u = u / obs_sigma_scale
 
             else:
                 values[name] = variable.f(parents, u_latent[name])
                 u = u_latent[name]
 
-            loss = loss + 0.5 * u**2
+            u_sq = u**2
+            while u_sq.ndim > 1:
+                u_sq = u_sq.sum(dim=-1)
+            loss = loss + 0.5 * u_sq
 
         return loss
 
@@ -619,12 +623,7 @@ class LaplacePosterior:
         latent_diag: list[float] = []
         for name in latent_names:
             sigma = self._variables[name].sigma
-            if sigma is None:
-                raise ValueError(
-                    f"Variable '{name}' has no sigma configured. "
-                    "Set sigma to evaluate approximate covariance."
-                )
-            latent_diag.append(1 / sigma**2)
+            latent_diag.append(1.0 if sigma is None else 1 / sigma**2)
         gn_hessian_rav[:, range(latent_dim), range(latent_dim)] = torch.tensor(
             latent_diag,
             device=device,
@@ -650,12 +649,8 @@ class LaplacePosterior:
             g = g / scale[:, None]
 
             sigma_obs = self._variables[observed_name].sigma
-            if sigma_obs is None:
-                raise ValueError(
-                    f"Variable '{observed_name}' has no sigma configured. "
-                    "Set sigma to evaluate approximate covariance."
-                )
-            gn_hessian_rav += g[:, None] * g[:, :, None] / sigma_obs**2
+            obs_scale = 1.0 if sigma_obs is None else sigma_obs**2
+            gn_hessian_rav += g[:, None] * g[:, :, None] / obs_scale
 
         # Enforce exact symmetry before Cholesky to avoid numerical skew.
         gn_hessian_rav = 0.5 * (gn_hessian_rav + gn_hessian_rav.transpose(-1, -2))
@@ -720,7 +715,8 @@ class LaplacePosterior:
 
             if name in observed:
                 if name == observed_name:
-                    return self._variables[name].f_mean(parents)
+                    value = self._variables[name].f_mean(parents)
+                    return value if value.ndim == 0 else value.sum()
 
                 values[name] = observed[name]
             else:

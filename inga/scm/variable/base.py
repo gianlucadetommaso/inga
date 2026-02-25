@@ -83,3 +83,19 @@ class Variable:
         raise NotImplementedError(
             f"Variable '{self.name}' cannot be reconstructed from mean and noise."
         )
+
+    def infer_noise(
+        self,
+        parents: dict[str, Tensor],
+        observed: Tensor,
+    ) -> Tensor:
+        """Infer exogenous noise from observed value and parent values.
+
+        Default implementation supports additive models with configured
+        ``sigma`` via ``u = (observed - f_mean(parents)) / sigma``.
+        """
+        if self.sigma is None:
+            raise NotImplementedError(
+                f"Variable '{self.name}' does not implement noise inversion."
+            )
+        return (observed - self.f_mean(parents)) / self.sigma

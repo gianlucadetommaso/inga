@@ -282,13 +282,16 @@ class TestSEMPosterior:
         with pytest.raises(ValueError, match="supported only for SCMs"):
             scm.causal_bias(observed, treatment_name="X", outcome_name="Y")
 
-    def test_causal_quantities_reject_categorical_variables(self) -> None:
-        """Causal quantities are currently unsupported when SCM includes categorical nodes."""
+    def test_causal_quantities_support_categorical_covariates(self) -> None:
+        """Causal quantities should run when categorical nodes are present."""
         scm = SCM(
             variables=[
                 CategoricalVariable(
-                    name="X",
+                    name="C",
                     f_logits=lambda _: torch.tensor([0.4, -0.1, 0.8]),
+                ),
+                LinearVariable(
+                    name="X", parent_names=[], sigma=1.0, coefs={}, intercept=0.0
                 ),
                 LinearVariable(
                     name="Y",
@@ -299,13 +302,19 @@ class TestSEMPosterior:
                 ),
             ]
         )
-        observed = {"X": torch.tensor([1.0, 0.0])}
 
-        with pytest.raises(ValueError, match="supported only for SCMs"):
-            scm.causal_effect(observed, treatment_name="X", outcome_name="Y")
+        torch.manual_seed(0)
+        values = scm.generate(6)
+        observed = {"C": values["C"], "X": values["X"]}
 
-        with pytest.raises(ValueError, match="supported only for SCMs"):
-            scm.causal_bias(observed, treatment_name="X", outcome_name="Y")
+        scm.posterior.fit(observed)
+        effect = scm.causal_effect(observed, treatment_name="X", outcome_name="Y")
+        bias = scm.causal_bias(observed, treatment_name="X", outcome_name="Y")
+
+        assert effect.shape == (6,)
+        assert bias.shape == (6,)
+        assert torch.isfinite(effect).all()
+        assert torch.isfinite(bias).all()
 
 
 class TestSEMPosteriorPredictiveHTML:
