@@ -66,3 +66,18 @@ class GaussianVariable(Variable):
         """Infer additive Gaussian noise from observed values."""
         sigma = cast(float, self.sigma)
         return (observed - self.f_mean(parents)) / sigma
+
+    def log_pdf(
+        self,
+        parents: dict[str, Tensor],
+        observed: Tensor,
+        noise_scale: float = 1.0,
+    ) -> Tensor:
+        """Gaussian log density in noise space (up to additive constants)."""
+        u = self.infer_noise(parents=parents, observed=observed)
+        if noise_scale != 1.0:
+            u = u / noise_scale
+        u_sq = u**2
+        while u_sq.ndim > 1:
+            u_sq = u_sq.sum(dim=-1)
+        return -0.5 * u_sq

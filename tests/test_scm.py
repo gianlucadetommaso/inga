@@ -266,7 +266,7 @@ class TestSEMPosterior:
             scm.posterior.sample(10)
 
     def test_causal_quantities_require_gaussian_variables(self) -> None:
-        """Non-supported variable families should be blocked by posterior/hessian path."""
+        """Non-supported variable families should fail posterior objective evaluation."""
         scm = SCM(
             variables=[
                 NonGaussianVariable(name="X", sigma=1.0),
@@ -275,10 +275,7 @@ class TestSEMPosterior:
         )
         observed = {"X": torch.tensor([0.1, -0.2])}
 
-        with pytest.raises(
-            ValueError,
-            match="Hessian approximation is currently supported only",
-        ):
+        with pytest.raises(NotImplementedError, match="log-density evaluation"):
             scm.posterior.fit(observed)
 
     def test_causal_quantities_support_categorical_covariates(self) -> None:
