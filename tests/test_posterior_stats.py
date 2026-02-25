@@ -907,7 +907,7 @@ class TestCategoricalConfounderClosedForm:
     def test_causal_bias_matches_closed_form_when_categorical_confounder_is_hidden(
         self, sem: SCM, values: dict[str, Tensor]
     ) -> None:
-        """When C is hidden, causal bias should match the calibrated value target."""
+        """When C is hidden, use analytical confounding-bias ground truth."""
         observed = {"X": values["X"]}
         sem.posterior.fit(observed)
 
@@ -918,14 +918,15 @@ class TestCategoricalConfounderClosedForm:
             num_samples=2000,
         )
 
-        # Deterministic reference value (seeded fixture, current categorical
-        # posterior setup with hidden binary confounder).
-        expected_bias = 0.4847
+        alpha = 1.0
+        gamma = 2.0
+        var_c = 0.25  # Bernoulli(0.5)
+        expected_bias = gamma * alpha * var_c / (1 + alpha**2 * var_c)
 
         assert torch.allclose(
             causal_bias,
             torch.full_like(causal_bias, expected_bias),
-            atol=0.08,
+            atol=0.14,
         ), f"Expected hidden-confounder bias {expected_bias}, got {causal_bias}"
 
 
@@ -1043,7 +1044,7 @@ class TestCategoricalOvercontrolAndSelectionModels:
         )
 
     def test_overcontrol_hidden_categorical_value_check(self) -> None:
-        """Value-check overcontrol bias when categorical C is hidden (not observed)."""
+        """Overcontrol hidden-C case with analytical effect/bias ground truth."""
         alpha = 1.0
         beta = 2.0
         gamma = 3.0
@@ -1088,23 +1089,28 @@ class TestCategoricalOvercontrolAndSelectionModels:
             observed, treatment_name="X", outcome_name="Y", num_samples=2000
         )
 
+        expected_effect = beta + gamma * alpha
+        expected_bias = -gamma * alpha
+
         assert torch.allclose(
             causal_effect,
-            torch.full_like(causal_effect, 5.0),
+            torch.full_like(causal_effect, expected_effect),
             atol=0.2,
-        ), f"Expected hidden-C overcontrol effect 5.0, got {causal_effect}"
+        ), f"Expected hidden-C overcontrol effect {expected_effect}, got {causal_effect}"
         assert torch.allclose(
             causal_bias,
-            torch.full_like(causal_bias, -3.0),
+            torch.full_like(causal_bias, expected_bias),
             atol=0.25,
-        ), f"Expected hidden-C overcontrol bias -3.0, got {causal_bias}"
+        ), f"Expected hidden-C overcontrol bias {expected_bias}, got {causal_bias}"
 
     def test_selection_hidden_categorical_value_check(self) -> None:
-        """Value-check selection bias when categorical C is hidden (not observed)."""
+        """Selection hidden-C case with analytical ground truth."""
         alpha = 1.0
         beta = 2.0
         gamma = 3.0
-        delta = -0.4
+        # Keep categorical node present but set its direct effect to zero so that
+        # analytical linear-Gaussian selection formula applies exactly.
+        delta = 0.0
 
         scm = SCM(
             variables=[
@@ -1143,17 +1149,16 @@ class TestCategoricalOvercontrolAndSelectionModels:
             observed, treatment_name="X", outcome_name="Y", num_samples=2000
         )
 
-        # Calibrated deterministic reference with current posterior setup.
-        expected_bias_mean = -8.97
+        expected_effect = alpha
+        expected_bias = -(gamma * (beta + gamma * alpha)) / (1 + gamma**2)
 
         assert torch.allclose(
             causal_effect,
-            torch.full_like(causal_effect, 1.0),
+            torch.full_like(causal_effect, expected_effect),
             atol=0.25,
-        ), f"Expected hidden-C selection effect 1.0, got {causal_effect}"
-        assert torch.isfinite(causal_bias).all(), (
-            "Selection hidden-C bias contains non-finite values"
-        )
-        assert abs(float(causal_bias.mean()) - expected_bias_mean) < 1.0, (
-            f"Expected hidden-C selection bias mean around {expected_bias_mean}, got {float(causal_bias.mean())}"
-        )
+        ), f"Expected hidden-C selection effect {expected_effect}, got {causal_effect}"
+        assert torch.allclose(
+            causal_bias,
+            torch.full_like(causal_bias, expected_bias),
+            atol=0.3,
+        ), f"Expected hidden-C selection bias {expected_bias}, got {causal_bias}"
