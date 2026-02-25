@@ -150,6 +150,18 @@ class CategoricalVariable(Variable):
         """
         return torch.exp(-u) - 1.0
 
+    def noise_neg_log_prob(self, u: Tensor) -> Tensor:
+        """Negative log-prior for standard Gumbel noise (up to constants)."""
+        return u + torch.exp(-u)
+
+    def noise_neg_log_hessian_diag(self, u: Tensor) -> Tensor:
+        """Diagonal Hessian of ``-log p(u)`` for standard Gumbel noise.
+
+        Since ``-log p(u) = u + exp(-u)``, we have
+        ``∇²_u[-log p(u)] = exp(-u)``.
+        """
+        return torch.exp(-u)
+
     @staticmethod
     def _combine_logits_and_noise(logits: Tensor, noise: Tensor) -> Tensor:
         """Broadcast/add noise to logits, supporting class-dimension expansion."""

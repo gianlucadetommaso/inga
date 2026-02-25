@@ -110,3 +110,15 @@ class Variable:
         raise NotImplementedError(
             f"Variable '{self.name}' does not implement a noise score function."
         )
+
+    def noise_neg_log_prob(self, u: Tensor) -> Tensor:
+        """Negative log prior (up to additive constants) evaluated at ``u``."""
+        raise NotImplementedError(
+            f"Variable '{self.name}' does not implement noise negative log-probability."
+        )
+
+    def noise_neg_log_hessian_diag(self, u: Tensor) -> Tensor:
+        """Diagonal of ``∇²_u[-log p(u)]`` evaluated at ``u``."""
+        raise NotImplementedError(
+            f"Variable '{self.name}' does not implement noise prior Hessian."
+        )

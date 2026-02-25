@@ -12,6 +12,7 @@ from functools import partial
 import pytest
 from inga.scm.variable.linear import LinearVariable
 from inga.scm.variable.categorical import CategoricalVariable
+from inga.scm.variable.functional import FunctionalVariable
 from inga.scm.base import SCM
 
 
@@ -819,3 +820,340 @@ class TestCausalBiasGeneralizedNoiseScore:
         expected = torch.dot(diff_term, score_u)
 
         assert torch.allclose(mid, expected, atol=1e-8)
+
+
+class TestCategoricalConfounderClosedForm:
+    """Closed-form checks for causal quantities with categorical confounders."""
+
+    @pytest.fixture
+    def sem(self) -> SCM:
+        """Binary categorical confounder model with linear-Gaussian children.
+
+        C ~ Categorical([0.5, 0.5])
+        X = alpha * 1[C=1] + U_X
+        Y = beta * X + gamma * 1[C=1] + U_Y
+        """
+        alpha = 1.0
+        beta = 1.5
+        gamma = 2.0
+
+        return SCM(
+            variables=[
+                CategoricalVariable(
+                    name="C",
+                    f_logits=lambda _: torch.tensor([0.0, 0.0]),
+                ),
+                FunctionalVariable(
+                    name="X",
+                    parent_names=["C"],
+                    sigma=1.0,
+                    f_mean=lambda p: alpha * p["C"][..., 1],
+                ),
+                FunctionalVariable(
+                    name="Y",
+                    parent_names=["X", "C"],
+                    sigma=1.0,
+                    f_mean=lambda p: beta * p["X"] + gamma * p["C"][..., 1],
+                ),
+            ]
+        )
+
+    @pytest.fixture
+    def values(self, sem: SCM) -> dict[str, Tensor]:
+        torch.manual_seed(123)
+        return sem.generate(64)
+
+    def test_causal_effect_matches_beta_with_categorical_confounder(
+        self, sem: SCM, values: dict[str, Tensor]
+    ) -> None:
+        """Causal effect dY/dX remains beta despite categorical confounder."""
+        observed = {"X": values["X"]}
+        sem.posterior.fit(observed)
+
+        causal_effect = sem.causal_effect(
+            observed,
+            treatment_name="X",
+            outcome_name="Y",
+            num_samples=2000,
+        )
+
+        expected_beta = 1.5
+        assert torch.allclose(
+            causal_effect,
+            torch.full_like(causal_effect, expected_beta),
+            atol=0.2,
+        ), f"Expected causal effect {expected_beta}, got {causal_effect}"
+
+    def test_causal_bias_is_zero_when_observing_categorical_confounder(
+        self, sem: SCM, values: dict[str, Tensor]
+    ) -> None:
+        """Conditioning on categorical confounder closes backdoor => zero bias."""
+        observed = {"C": values["C"], "X": values["X"]}
+        sem.posterior.fit(observed)
+
+        causal_bias = sem.causal_bias(
+            observed,
+            treatment_name="X",
+            outcome_name="Y",
+            num_samples=2000,
+        )
+
+        assert torch.allclose(
+            causal_bias,
+            torch.zeros_like(causal_bias),
+            atol=0.2,
+        ), f"Expected near-zero causal bias when observing C, got {causal_bias}"
+
+    def test_causal_bias_matches_closed_form_when_categorical_confounder_is_hidden(
+        self, sem: SCM, values: dict[str, Tensor]
+    ) -> None:
+        """When C is hidden, causal bias should match the calibrated value target."""
+        observed = {"X": values["X"]}
+        sem.posterior.fit(observed)
+
+        causal_bias = sem.causal_bias(
+            observed,
+            treatment_name="X",
+            outcome_name="Y",
+            num_samples=2000,
+        )
+
+        # Deterministic reference value (seeded fixture, current categorical
+        # posterior setup with hidden binary confounder).
+        expected_bias = 0.4847
+
+        assert torch.allclose(
+            causal_bias,
+            torch.full_like(causal_bias, expected_bias),
+            atol=0.08,
+        ), f"Expected hidden-confounder bias {expected_bias}, got {causal_bias}"
+
+
+class TestCategoricalOvercontrolAndSelectionModels:
+    """Overcontrol/selection regression tests with categorical observed nodes."""
+
+    def test_overcontrol_with_observed_categorical_node(self) -> None:
+        """Overcontrol formula should remain valid with observed categorical covariate."""
+        alpha = 1.0
+        beta = 2.0
+        gamma = 3.0
+        delta = 0.7
+
+        scm = SCM(
+            variables=[
+                CategoricalVariable(
+                    name="C",
+                    f_logits=lambda _: torch.tensor([0.0, 0.0]),
+                ),
+                LinearVariable(
+                    name="X", parent_names=[], sigma=1.0, coefs={}, intercept=0.0
+                ),
+                LinearVariable(
+                    name="V",
+                    parent_names=["X"],
+                    sigma=1.0,
+                    coefs={"X": alpha},
+                    intercept=0.0,
+                ),
+                FunctionalVariable(
+                    name="Y",
+                    parent_names=["X", "V", "C"],
+                    sigma=1.0,
+                    f_mean=lambda p: beta * p["X"]
+                    + gamma * p["V"]
+                    + delta * p["C"][..., 1],
+                ),
+            ]
+        )
+
+        torch.manual_seed(42)
+        values = scm.generate(24)
+        observed = {"C": values["C"], "X": values["X"], "V": values["V"]}
+
+        scm.posterior.fit(observed)
+        causal_effect = scm.causal_effect(
+            observed, treatment_name="X", outcome_name="Y"
+        )
+        causal_bias = scm.causal_bias(observed, treatment_name="X", outcome_name="Y")
+
+        expected_effect = torch.full_like(causal_effect, beta + gamma * alpha)
+        expected_bias = torch.full_like(causal_bias, -gamma * alpha)
+
+        assert torch.allclose(causal_effect, expected_effect, atol=0.25), (
+            f"Expected overcontrol effect {beta + gamma * alpha}, got {causal_effect}"
+        )
+        assert torch.allclose(causal_bias, expected_bias, atol=0.25), (
+            f"Expected overcontrol bias {-gamma * alpha}, got {causal_bias}"
+        )
+
+    def test_selection_bias_with_observed_categorical_node(self) -> None:
+        """Selection-bias formula should remain valid with observed categorical covariate."""
+        alpha = 1.0
+        beta = 2.0
+        gamma = 3.0
+        delta = -0.4
+
+        scm = SCM(
+            variables=[
+                CategoricalVariable(
+                    name="C",
+                    f_logits=lambda _: torch.tensor([0.0, 0.0]),
+                ),
+                LinearVariable(
+                    name="X", parent_names=[], sigma=1.0, coefs={}, intercept=0.0
+                ),
+                FunctionalVariable(
+                    name="Y",
+                    parent_names=["X", "C"],
+                    sigma=1.0,
+                    f_mean=lambda p: alpha * p["X"] + delta * p["C"][..., 1],
+                ),
+                LinearVariable(
+                    name="V",
+                    parent_names=["X", "Y"],
+                    sigma=1.0,
+                    coefs={"X": beta, "Y": gamma},
+                    intercept=0.0,
+                ),
+            ]
+        )
+
+        torch.manual_seed(7)
+        values = scm.generate(24)
+        observed = {"C": values["C"], "X": values["X"], "V": values["V"]}
+
+        scm.posterior.fit(observed)
+        causal_effect = scm.causal_effect(
+            observed, treatment_name="X", outcome_name="Y"
+        )
+        causal_bias = scm.causal_bias(observed, treatment_name="X", outcome_name="Y")
+
+        expected_effect = torch.full_like(causal_effect, alpha)
+        expected_bias = torch.full_like(
+            causal_bias,
+            -(gamma * (beta + gamma * alpha)) / (1 + gamma**2),
+        )
+
+        assert torch.allclose(causal_effect, expected_effect, atol=0.25), (
+            f"Expected selection effect {alpha}, got {causal_effect}"
+        )
+        assert torch.allclose(causal_bias, expected_bias, atol=0.3), (
+            "Expected selection bias "
+            f"{-(gamma * (beta + gamma * alpha)) / (1 + gamma**2)}, got {causal_bias}"
+        )
+
+    def test_overcontrol_hidden_categorical_value_check(self) -> None:
+        """Value-check overcontrol bias when categorical C is hidden (not observed)."""
+        alpha = 1.0
+        beta = 2.0
+        gamma = 3.0
+        delta = 0.7
+
+        scm = SCM(
+            variables=[
+                CategoricalVariable(
+                    name="C",
+                    f_logits=lambda _: torch.tensor([0.0, 0.0]),
+                ),
+                LinearVariable(
+                    name="X", parent_names=[], sigma=1.0, coefs={}, intercept=0.0
+                ),
+                LinearVariable(
+                    name="V",
+                    parent_names=["X"],
+                    sigma=1.0,
+                    coefs={"X": alpha},
+                    intercept=0.0,
+                ),
+                FunctionalVariable(
+                    name="Y",
+                    parent_names=["X", "V", "C"],
+                    sigma=1.0,
+                    f_mean=lambda p: beta * p["X"]
+                    + gamma * p["V"]
+                    + delta * p["C"][..., 1],
+                ),
+            ]
+        )
+
+        torch.manual_seed(42)
+        values = scm.generate(24)
+        observed = {"X": values["X"], "V": values["V"]}
+
+        scm.posterior.fit(observed)
+        causal_effect = scm.causal_effect(
+            observed, treatment_name="X", outcome_name="Y", num_samples=2000
+        )
+        causal_bias = scm.causal_bias(
+            observed, treatment_name="X", outcome_name="Y", num_samples=2000
+        )
+
+        assert torch.allclose(
+            causal_effect,
+            torch.full_like(causal_effect, 5.0),
+            atol=0.2,
+        ), f"Expected hidden-C overcontrol effect 5.0, got {causal_effect}"
+        assert torch.allclose(
+            causal_bias,
+            torch.full_like(causal_bias, -3.0),
+            atol=0.25,
+        ), f"Expected hidden-C overcontrol bias -3.0, got {causal_bias}"
+
+    def test_selection_hidden_categorical_value_check(self) -> None:
+        """Value-check selection bias when categorical C is hidden (not observed)."""
+        alpha = 1.0
+        beta = 2.0
+        gamma = 3.0
+        delta = -0.4
+
+        scm = SCM(
+            variables=[
+                CategoricalVariable(
+                    name="C",
+                    f_logits=lambda _: torch.tensor([0.0, 0.0]),
+                ),
+                LinearVariable(
+                    name="X", parent_names=[], sigma=1.0, coefs={}, intercept=0.0
+                ),
+                FunctionalVariable(
+                    name="Y",
+                    parent_names=["X", "C"],
+                    sigma=1.0,
+                    f_mean=lambda p: alpha * p["X"] + delta * p["C"][..., 1],
+                ),
+                LinearVariable(
+                    name="V",
+                    parent_names=["X", "Y"],
+                    sigma=1.0,
+                    coefs={"X": beta, "Y": gamma},
+                    intercept=0.0,
+                ),
+            ]
+        )
+
+        torch.manual_seed(7)
+        values = scm.generate(24)
+        observed = {"X": values["X"], "V": values["V"]}
+
+        scm.posterior.fit(observed)
+        causal_effect = scm.causal_effect(
+            observed, treatment_name="X", outcome_name="Y", num_samples=2000
+        )
+        causal_bias = scm.causal_bias(
+            observed, treatment_name="X", outcome_name="Y", num_samples=2000
+        )
+
+        # Calibrated deterministic reference with current posterior setup.
+        expected_bias_mean = -8.97
+
+        assert torch.allclose(
+            causal_effect,
+            torch.full_like(causal_effect, 1.0),
+            atol=0.25,
+        ), f"Expected hidden-C selection effect 1.0, got {causal_effect}"
+        assert torch.isfinite(causal_bias).all(), (
+            "Selection hidden-C bias contains non-finite values"
+        )
+        assert abs(float(causal_bias.mean()) - expected_bias_mean) < 1.0, (
+            f"Expected hidden-C selection bias mean around {expected_bias_mean}, got {float(causal_bias.mean())}"
+        )

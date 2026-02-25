@@ -831,3 +831,36 @@ class TestLaplacePosteriorJacobianStandardization:
         expected_cov = 1.0 / expected_h
 
         assert torch.allclose(cov, expected_cov, atol=1e-6)
+
+    def test_categorical_latent_prior_hessian_uses_gumbel_second_derivative(
+        self,
+    ) -> None:
+        """Latent prior diagonal should use variable-specific noise Hessian."""
+        from inga.scm.variable.categorical import CategoricalVariable
+
+        posterior = LaplacePosterior(
+            variables={
+                "C": CategoricalVariable(
+                    name="C",
+                    f_logits=lambda _: torch.tensor([0.2, -0.3, 0.1]),
+                ),
+                "X": LinearVariable(
+                    name="X", parent_names=[], sigma=1.0, coefs={}, intercept=0.0
+                ),
+            }
+        )
+
+        observed = {"X": torch.zeros(3, dtype=torch.float64)}
+        u_latent_rav = torch.tensor([[0.0], [0.5], [-0.7]], dtype=torch.float64)
+
+        L = posterior._approx_cov_chol(
+            u_latent_rav=u_latent_rav,
+            observed=observed,
+            latent_names=["C"],
+        )
+
+        cov = L.squeeze(-1).squeeze(-1) ** 2
+        expected_h = torch.exp(-u_latent_rav.squeeze(-1))
+        expected_cov = 1.0 / expected_h
+
+        assert torch.allclose(cov, expected_cov, atol=1e-6)

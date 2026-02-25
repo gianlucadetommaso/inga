@@ -85,3 +85,11 @@ class GaussianVariable(Variable):
     def noise_score(self, u: Tensor) -> Tensor:
         """Score function of standard Gaussian noise: ∇u log p(u) = -u."""
         return -u
+
+    def noise_neg_log_prob(self, u: Tensor) -> Tensor:
+        """Negative log-prior for standard Gaussian noise (up to constants)."""
+        return 0.5 * u**2
+
+    def noise_neg_log_hessian_diag(self, u: Tensor) -> Tensor:
+        """Diagonal Hessian of ``-log p(u)`` for standard Gaussian noise."""
+        return torch.ones_like(u)

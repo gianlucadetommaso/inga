@@ -86,6 +86,7 @@ class LaplacePosterior:
         """
         self._variables = variables
         self._state: LaplacePosteriorState | None = None
+        self._latent_shapes: dict[str, torch.Size] = {}
         self._adam_scheduler_gamma: float | None = None
         self._lbfgs_line_search_fn: str | None = "strong_wolfe"
         self.configure_map_options(
@@ -215,6 +216,7 @@ class LaplacePosterior:
         latent_names = [name for name in self._variables if name not in observed]
 
         if len(latent_names) == 0:
+            self._latent_shapes = {}
             self.state = LaplacePosteriorState(
                 MAP_components_rav=torch.empty(
                     (num_samples, 1, 0), device=reference.device, dtype=reference.dtype
@@ -410,6 +412,10 @@ class LaplacePosterior:
                 reference=reference,
                 init_scale=init_scale,
             )
+            if i == 0:
+                self._latent_shapes = {
+                    name: u_candidate[name].shape[1:] for name in latent_names
+                }
             candidates.append(u_candidate)
             observed_for_loss = {
                 name: value.to(dtype=next(iter(u_candidate.values())).dtype)
@@ -448,13 +454,21 @@ class LaplacePosterior:
         }
         if init_scale == 0.0:
             z_init = {
-                name: torch.zeros(size, device=reference.device, dtype=opt_dtype)
+                name: torch.zeros(
+                    (size, *self._infer_latent_noise_shape(name)),
+                    device=reference.device,
+                    dtype=opt_dtype,
+                )
                 for name in latent_names
             }
         else:
             z_init = {
                 name: (init_scale / initial_radius)
-                * torch.randn(size, device=reference.device, dtype=opt_dtype)
+                * torch.randn(
+                    (size, *self._infer_latent_noise_shape(name)),
+                    device=reference.device,
+                    dtype=opt_dtype,
+                )
                 for name in latent_names
             }
 
@@ -517,12 +531,16 @@ class LaplacePosterior:
             (refined_loss <= continuation_loss) | ~torch.isfinite(continuation_loss)
         )
 
-        return {
-            name: torch.where(use_refined, refined_u[name], continuation_u[name]).to(
-                dtype=reference.dtype
-            )
-            for name in latent_names
-        }
+        out: dict[str, Tensor] = {}
+        for name in latent_names:
+            r_u = refined_u[name]
+            c_u = continuation_u[name]
+            mask = use_refined
+            while mask.ndim < r_u.ndim:
+                mask = mask.unsqueeze(-1)
+            out[name] = torch.where(mask, r_u, c_u).to(dtype=reference.dtype)
+
+        return out
 
     def _posterior_loss_fn(
         self,
@@ -572,11 +590,10 @@ class LaplacePosterior:
             else:
                 values[name] = variable.f(parents, u_latent[name])
                 u = u_latent[name]
-
-            u_sq = u**2
-            while u_sq.ndim > 1:
-                u_sq = u_sq.sum(dim=-1)
-            loss = loss + 0.5 * u_sq
+            prior_term = variable.noise_neg_log_prob(u)
+            while prior_term.ndim > 1:
+                prior_term = prior_term.sum(dim=-1)
+            loss = loss + prior_term
 
         return loss
 
@@ -616,11 +633,16 @@ class LaplacePosterior:
                 f"Found unsupported variables: {sorted(unsupported)}."
             )
 
-        latent_dim = len(latent_names)
-        if u_latent_rav.shape[1] != latent_dim:
+        latent_dim = u_latent_rav.shape[1]
+        latent_slices = self._latent_slices(latent_names)
+        expected_dim = sum(
+            s.stop - s.start
+            for s in latent_slices.values()  # type: ignore[arg-type]
+        )
+        if expected_dim != latent_dim:
             raise ValueError(
-                f"`u_latent_rav.shape[1]` and `len(latent_names)` must match, "
-                f"but {u_latent_rav.shape[1]} != {latent_dim}."
+                "Raveled latent dimension does not match stored latent shapes: "
+                f"{latent_dim} != {expected_dim}."
             )
 
         num_samples = len(u_latent_rav)
@@ -636,15 +658,19 @@ class LaplacePosterior:
         gn_hessian_rav = torch.zeros(
             (num_samples, latent_dim, latent_dim), device=device, dtype=hessian_dtype
         )
-        latent_diag: list[float] = []
         for name in latent_names:
-            sigma = self._variables[name].sigma
-            latent_diag.append(1.0 if sigma is None else 1 / sigma**2)
-        gn_hessian_rav[:, range(latent_dim), range(latent_dim)] = torch.tensor(
-            latent_diag,
-            device=device,
-            dtype=hessian_dtype,
-        )
+            sl = latent_slices[name]
+            variable = self._variables[name]
+            u_name = u_latent_rav_h[:, sl]
+            if u_name.shape[1] == 1:
+                u_name = u_name[:, 0]
+            h_diag = variable.noise_neg_log_hessian_diag(u_name).to(
+                device=device,
+                dtype=hessian_dtype,
+            )
+            h_flat = h_diag.reshape(num_samples, -1)
+            diag_idx = torch.arange(sl.start, sl.stop, device=device)
+            gn_hessian_rav[:, diag_idx, diag_idx] = h_flat
 
         for observed_name in observed_h:
             observed_variable = self._variables[observed_name]
@@ -805,7 +831,13 @@ class LaplacePosterior:
             Stacked tensor of shape (batch_size, num_latent).
         """
         latent_names = self._get_latent_names(u_latent)
-        return torch.stack([u_latent[name] for name in latent_names], dim=1)
+        return torch.cat(
+            [
+                u_latent[name].reshape(u_latent[name].shape[0], -1)
+                for name in latent_names
+            ],
+            dim=1,
+        )
 
     def _unravel(
         self, u_latent_rav: Tensor, latent_names: list[str]
@@ -819,7 +851,37 @@ class LaplacePosterior:
         Returns:
             Dictionary mapping latent names to tensors.
         """
-        return {
-            name: u_latent_rav.select(dim=-1, index=i)
-            for i, name in enumerate(latent_names)
-        }
+        latent_slices = self._latent_slices(latent_names)
+        out: dict[str, Tensor] = {}
+        for name in latent_names:
+            sl = latent_slices[name]
+            shape = self._latent_shapes.get(name, torch.Size())
+            part = u_latent_rav[..., sl]
+            if len(shape) == 0:
+                out[name] = part.squeeze(-1)
+            else:
+                out[name] = part.reshape(*part.shape[:-1], *shape)
+        return out
+
+    def _latent_slices(self, latent_names: list[str]) -> dict[str, slice]:
+        """Build raveled index slices for each latent variable."""
+        slices: dict[str, slice] = {}
+        cursor = 0
+        for name in latent_names:
+            shape = self._latent_shapes.get(name, torch.Size())
+            width = int(torch.tensor(shape).prod().item()) if len(shape) > 0 else 1
+            slices[name] = slice(cursor, cursor + width)
+            cursor += width
+        return slices
+
+    def _infer_latent_noise_shape(self, name: str) -> tuple[int, ...]:
+        """Infer latent noise shape for optimization initialization."""
+        variable = self._variables[name]
+        if (
+            isinstance(variable, CategoricalVariable)
+            and len(variable.parent_names) == 0
+        ):
+            logits = variable.f_logits({})
+            if logits.ndim == 1:
+                return (logits.shape[-1],)
+        return ()

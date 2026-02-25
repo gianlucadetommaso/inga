@@ -476,6 +476,7 @@ def test_gaussian_variable_noise_score_is_negative_u() -> None:
     var = _TmpGaussian(name="X", sigma=1.0)
     u = torch.tensor([0.2, -1.5, 3.0])
     assert torch.allclose(var.noise_score(u), -u)
+    assert torch.allclose(var.noise_neg_log_hessian_diag(u), torch.ones_like(u))
 
 
 def test_categorical_variable_noise_score_matches_gumbel_formula() -> None:
@@ -488,3 +489,4 @@ def test_categorical_variable_noise_score_matches_gumbel_formula() -> None:
     u = torch.tensor([[0.0, 1.0, -1.0], [2.0, -0.5, 0.3]])
     expected = torch.exp(-u) - 1.0
     assert torch.allclose(var.noise_score(u), expected)
+    assert torch.allclose(var.noise_neg_log_hessian_diag(u), torch.exp(-u))
