@@ -4,12 +4,35 @@ import torch
 from torch import Tensor
 import pytest
 from typing import Mapping
+from collections.abc import Callable
 from inga.scm.variable.base import Variable
+from inga.scm.variable.categorical import CategoricalVariable
 from inga.scm.variable.linear import LinearVariable
 from inga.scm.variable.functional import FunctionalVariable
 from inga.approx_posterior.laplace import LaplacePosterior, LaplacePosteriorState
 from inga.scm.base import SCM
 from inga.scm.random import RandomSCMConfig, random_scm, resolve_transforms
+
+
+class _ConcreteCategoricalVariable(CategoricalVariable):
+    """Concrete categorical variable for tests requiring explicit logits."""
+
+    def __init__(
+        self,
+        name: str,
+        f_logits: Callable[[dict[str, Tensor]], Tensor],
+        parent_names: list[str] | None = None,
+        temperature: float = 0.1,
+    ) -> None:
+        super().__init__(
+            name=name,
+            parent_names=parent_names,
+            temperature=temperature,
+        )
+        self._test_f_logits = f_logits
+
+    def f_logits(self, parents: dict[str, Tensor]) -> Tensor:
+        return self._test_f_logits(parents)
 
 
 @pytest.fixture
@@ -431,9 +454,9 @@ class TestLaplacePosteriorRobustMapComponents:
             self: LaplacePosterior,
             u_latent: Mapping[str, Tensor],
             observed: dict[str, Tensor],
-            obs_sigma_scale: float = 1.0,
+            obs_noise_scale: float = 1.0,
         ) -> Tensor:
-            recorded_scales.append(obs_sigma_scale)
+            recorded_scales.append(obs_noise_scale)
             # Keep autograd path for optimizer steps.
             zero = torch.zeros_like(next(iter(u_latent.values())))
             return sum((u**2 for u in u_latent.values()), start=zero)
@@ -486,7 +509,7 @@ class TestLaplacePosteriorRobustMapComponents:
         def fake_loss(
             u_latent: Mapping[str, Tensor],
             observed: dict[str, Tensor],
-            obs_sigma_scale: float = 1.0,
+            obs_noise_scale: float = 1.0,
         ) -> Tensor:
             marker = int(u_latent["Z"][0].item())
             return losses[marker]
@@ -745,3 +768,118 @@ class TestLaplacePosteriorJacobianStandardization:
         # Stronger cap (smaller value) means weaker GN curvature and thus
         # larger posterior covariance factor magnitude.
         assert L_lo.abs().mean() > L_hi.abs().mean()
+
+    def test_hessian_approximation_rejects_unsupported_variable_families(self) -> None:
+        """GN Hessian approximation should reject variable families not yet supported."""
+
+        class UnsupportedVariable(Variable):
+            def __init__(
+                self, name: str, parent_names: list[str] | None = None
+            ) -> None:
+                super().__init__(name=name, parent_names=parent_names)
+                self.sigma = 1.0
+
+            def f_mean(self, parents: dict[str, Tensor]) -> Tensor:
+                if not parents:
+                    return torch.tensor(0.0)
+                return next(iter(parents.values()))
+
+            def f(self, parents: dict[str, Tensor], u: Tensor) -> Tensor:
+                return self.f_mean(parents) + u
+
+            def sample_noise(
+                self, num_samples: int, parents: dict[str, Tensor]
+            ) -> Tensor:
+                return torch.randn(num_samples)
+
+        variables: dict[str, Variable] = {
+            "X": UnsupportedVariable(name="X"),
+            "Y": UnsupportedVariable(name="Y", parent_names=["X"]),
+        }
+        posterior = LaplacePosterior(variables=variables)
+
+        with pytest.raises(
+            ValueError, match="Hessian approximation is currently supported only"
+        ):
+            posterior._approx_cov_chol(
+                u_latent_rav=torch.zeros(4, 1),
+                observed={"X": torch.zeros(4)},
+                latent_names=["Y"],
+            )
+
+    def test_categorical_ggn_uses_logits_jhj_formula(self) -> None:
+        """Categorical observed nodes should contribute J H J^T to GN Hessian."""
+        posterior = LaplacePosterior(
+            variables={
+                "Z": LinearVariable(
+                    name="Z", parent_names=[], sigma=1.0, coefs={}, intercept=0.0
+                ),
+                "C": _ConcreteCategoricalVariable(
+                    name="C",
+                    f_logits=lambda p: torch.stack(
+                        [p["Z"], -p["Z"], torch.zeros_like(p["Z"])], dim=-1
+                    ),
+                    parent_names=["Z"],
+                ),
+            }
+        )
+
+        observed = {
+            "C": torch.tensor([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]], dtype=torch.float64)
+        }
+        u_latent_rav = torch.tensor([[0.3], [-0.4]], dtype=torch.float64)
+
+        L = posterior._approx_cov_chol(
+            u_latent_rav=u_latent_rav,
+            observed=observed,
+            latent_names=["Z"],
+        )
+
+        cov = L.squeeze(-1).squeeze(-1) ** 2
+
+        z = u_latent_rav.squeeze(-1)
+        logits = torch.stack([z, -z, torch.zeros_like(z)], dim=-1)
+        probs = torch.softmax(logits, dim=-1)
+
+        j = torch.tensor([1.0, -1.0, 0.0], dtype=torch.float64)
+        fisher_j = torch.einsum(
+            "bi,bij,j->b",
+            j.expand_as(probs),
+            torch.diag_embed(probs) - probs[:, :, None] * probs[:, None, :],
+            j,
+        )
+        expected_h = 1.0 + fisher_j
+        expected_cov = 1.0 / expected_h
+
+        assert torch.allclose(cov, expected_cov, atol=1e-6)
+
+    def test_categorical_latent_prior_hessian_uses_gumbel_second_derivative(
+        self,
+    ) -> None:
+        """Latent prior diagonal should use variable-specific noise Hessian."""
+        posterior = LaplacePosterior(
+            variables={
+                "C": _ConcreteCategoricalVariable(
+                    name="C",
+                    f_logits=lambda _: torch.tensor([0.2, -0.3, 0.1]),
+                ),
+                "X": LinearVariable(
+                    name="X", parent_names=[], sigma=1.0, coefs={}, intercept=0.0
+                ),
+            }
+        )
+
+        observed = {"X": torch.zeros(3, dtype=torch.float64)}
+        u_latent_rav = torch.tensor([[0.0], [0.5], [-0.7]], dtype=torch.float64)
+
+        L = posterior._approx_cov_chol(
+            u_latent_rav=u_latent_rav,
+            observed=observed,
+            latent_names=["C"],
+        )
+
+        cov = L.squeeze(-1).squeeze(-1) ** 2
+        expected_h = torch.exp(-u_latent_rav.squeeze(-1))
+        expected_cov = 1.0 / expected_h
+
+        assert torch.allclose(cov, expected_cov, atol=1e-6)

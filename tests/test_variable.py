@@ -2,6 +2,7 @@
 
 import pytest
 import torch
+from typing import Callable
 from inga.scm.variable.base import Variable
 from inga.scm.variable.gaussian import GaussianVariable
 from inga.scm.variable.categorical import CategoricalVariable
@@ -20,12 +21,32 @@ class ConcreteVariable(Variable):
     ) -> torch.Tensor:
         return torch.zeros(num_samples)
 
+    def noise_score(self, u: torch.Tensor) -> torch.Tensor:
+        return torch.zeros_like(u)
+
 
 class ConcreteGaussianVariable(GaussianVariable):
     """Concrete Gaussian variable for testing Gaussian base behavior."""
 
     def f_mean(self, parents: dict[str, torch.Tensor]) -> torch.Tensor:
         return torch.tensor(0.0)
+
+
+class FunctionalCategoricalVariable(CategoricalVariable):
+    """Concrete categorical variable for tests via overridden logits."""
+
+    def __init__(
+        self,
+        name: str,
+        f_logits: Callable[[dict[str, torch.Tensor]], torch.Tensor],
+        parent_names: list[str] | None = None,
+        temperature: float = 0.1,
+    ) -> None:
+        super().__init__(name=name, parent_names=parent_names, temperature=temperature)
+        self._f_logits_fn = f_logits
+
+    def f_logits(self, parents: dict[str, torch.Tensor]) -> torch.Tensor:
+        return self._f_logits_fn(parents)
 
 
 class TestVariable:
@@ -354,9 +375,16 @@ class TestFunctionalVariable:
 class TestCategoricalVariable:
     """Tests for CategoricalVariable class."""
 
+    def test_base_f_logits_not_implemented(self) -> None:
+        """Base categorical class should require subclass logits implementation."""
+        var = CategoricalVariable(name="C")
+
+        with pytest.raises(NotImplementedError, match="structural logits"):
+            var.f_logits({})
+
     def test_init_uses_temperature_and_no_sigma(self) -> None:
         """CategoricalVariable should use temperature."""
-        var = CategoricalVariable(
+        var = FunctionalCategoricalVariable(
             name="C", f_logits=lambda _: torch.tensor([0.0, 1.0]), temperature=0.2
         )
 
@@ -365,7 +393,7 @@ class TestCategoricalVariable:
     def test_init_rejects_non_positive_temperature(self) -> None:
         """Temperature must be strictly positive."""
         with pytest.raises(ValueError, match="temperature"):
-            CategoricalVariable(
+            FunctionalCategoricalVariable(
                 name="C",
                 f_logits=lambda _: torch.tensor([0.0, 1.0]),
                 temperature=0.0,
@@ -373,7 +401,7 @@ class TestCategoricalVariable:
 
     def test_forward_pass_is_one_hot_argmax(self) -> None:
         """Forward values should be exact one-hot selections."""
-        var = CategoricalVariable(
+        var = FunctionalCategoricalVariable(
             name="C",
             f_logits=lambda _: torch.tensor([0.1, 3.0, -1.0]),
         )
@@ -387,7 +415,7 @@ class TestCategoricalVariable:
     def test_backward_flows_through_softmax_relaxation(self) -> None:
         """Gradient should match the straight-through softmax path."""
         parent = torch.tensor([0.2], requires_grad=True)
-        var = CategoricalVariable(
+        var = FunctionalCategoricalVariable(
             name="C",
             parent_names=["P"],
             f_logits=lambda parents: torch.stack(
@@ -408,7 +436,7 @@ class TestCategoricalVariable:
 
     def test_sample_noise_returns_gumbel_with_expected_shape(self) -> None:
         """Categorical noise sampler should return finite Gumbel noise."""
-        var = CategoricalVariable(
+        var = FunctionalCategoricalVariable(
             name="C",
             f_logits=lambda _: torch.tensor([0.2, 0.8, -0.4]),
         )
@@ -423,7 +451,7 @@ class TestCategoricalVariable:
         logits = torch.tensor([0.3, -0.4, 1.2])
         probs = torch.softmax(logits, dim=0)
 
-        var = CategoricalVariable(
+        var = FunctionalCategoricalVariable(
             name="C",
             f_logits=lambda _: logits,
         )
@@ -461,3 +489,29 @@ def test_gaussian_variable_f_from_mean_uses_precomputed_mean() -> None:
     u = torch.tensor([0.2, -0.4])
     out = var.f_from_mean(f_mean=f_mean, u=u)
     assert torch.allclose(out, torch.tensor([1.3, -2.6]))
+
+
+def test_gaussian_variable_noise_score_is_negative_u() -> None:
+    """Gaussian score should be ∇u log p(u) = -u."""
+
+    class _TmpGaussian(GaussianVariable):
+        def f_mean(self, parents: dict[str, torch.Tensor]) -> torch.Tensor:
+            return torch.tensor(0.0)
+
+    var = _TmpGaussian(name="X", sigma=1.0)
+    u = torch.tensor([0.2, -1.5, 3.0])
+    assert torch.allclose(var.noise_score(u), -u)
+    assert torch.allclose(var.noise_neg_log_hessian_diag(u), torch.ones_like(u))
+
+
+def test_categorical_variable_noise_score_matches_gumbel_formula() -> None:
+    """Gumbel score should be exp(-u) - 1 elementwise."""
+    var = FunctionalCategoricalVariable(
+        name="C",
+        f_logits=lambda _: torch.tensor([0.2, 0.8, -0.4]),
+    )
+
+    u = torch.tensor([[0.0, 1.0, -1.0], [2.0, -0.5, 0.3]])
+    expected = torch.exp(-u) - 1.0
+    assert torch.allclose(var.noise_score(u), expected)
+    assert torch.allclose(var.noise_neg_log_hessian_diag(u), torch.exp(-u))
