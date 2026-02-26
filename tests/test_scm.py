@@ -10,6 +10,7 @@ from inga.scm.variable.linear import LinearVariable
 from inga.scm.base import SCM
 from inga.scm.random import (
     RandomSCMConfig,
+    RandomCategoricalVariable,
     _build_f_mean,
     random_scm,
     resolve_transforms,
@@ -992,3 +993,37 @@ class TestRandomSEM:
             y = fn(x)
             assert y.shape == x.shape
             assert torch.isfinite(y).all()
+
+    def test_random_scm_supports_mixed_gaussian_and_categorical_variables(self) -> None:
+        """Random SCM should support rich Gaussian/Categorical mixtures."""
+        config = RandomSCMConfig(
+            num_variables=8,
+            parent_prob=0.7,
+            nonlinear_prob=0.8,
+            categorical_prob=0.45,
+            num_categories_range=(3, 7),
+            seed=42,
+        )
+        scm = random_scm(config)
+
+        gaussian_count = 0
+        categorical_count = 0
+        for variable in scm._variables.values():
+            if isinstance(variable, RandomCategoricalVariable):
+                categorical_count += 1
+            else:
+                gaussian_count += 1
+
+        assert gaussian_count >= 2
+        assert categorical_count >= 1
+
+        data = scm.generate(128)
+        assert len(data) == config.num_variables
+        for name, values in data.items():
+            variable = scm._variables[name]
+            if isinstance(variable, RandomCategoricalVariable):
+                assert values.ndim == 2
+                assert values.shape[0] == 128
+                assert torch.allclose(values.sum(dim=-1), torch.ones(128), atol=1e-4)
+            else:
+                assert values.shape == (128,)

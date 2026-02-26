@@ -14,6 +14,7 @@ from torch import Tensor
 
 from inga.scm.random import RandomSCMConfig, random_scm, resolve_transforms
 from inga.scm.variable.base import Variable
+from inga.scm.variable.gaussian import GaussianVariable
 from inga.scm.variable.linear import LinearVariable
 from inga.scm.variable.functional import FunctionalVariable
 
@@ -97,6 +98,7 @@ class SCMDatasetConfig:
 def _sample_query(
     rng: random.Random,
     variable_names: list[str],
+    queryable_names: list[str],
     min_observed: int,
     treatment_name: str | None = None,
 ) -> CausalQueryConfig:
@@ -107,34 +109,42 @@ def _sample_query(
     if len(variable_names) < 2:
         raise ValueError("At least two variables are required for a causal query.")
 
-    if treatment_name is not None and treatment_name not in variable_names:
+    if len(queryable_names) < 2:
+        raise ValueError(
+            "At least two Gaussian/queryable variables are required for a causal query."
+        )
+
+    if treatment_name is not None and treatment_name not in queryable_names:
         raise ValueError(f"Unknown treatment_name '{treatment_name}'.")
 
-    candidate_outcomes = (
-        [name for name in variable_names if name != treatment_name]
-        if treatment_name is not None
-        else variable_names
+    sampled_treatment_name = (
+        treatment_name if treatment_name is not None else rng.choice(queryable_names)
     )
+    candidate_outcomes = [
+        name for name in queryable_names if name != sampled_treatment_name
+    ]
+    if not candidate_outcomes:
+        raise ValueError(
+            "Could not sample an outcome variable distinct from treatment."
+        )
     outcome_name = rng.choice(candidate_outcomes)
 
     observed_candidates = [
         name
         for name in variable_names
-        if name != outcome_name and (treatment_name is None or name != treatment_name)
+        if name != outcome_name and name != sampled_treatment_name
     ]
-    required_observed = (
-        min_observed if treatment_name is None else max(0, min_observed - 1)
+    required_additional_observed = max(0, min_observed - 1)
+    if required_additional_observed > len(observed_candidates):
+        raise ValueError(
+            "min_observed is too large for available variables in this query setup."
+        )
+    additional_observed_size = rng.randint(
+        required_additional_observed,
+        len(observed_candidates),
     )
-    max_observed = max(required_observed, len(observed_candidates))
-    lower_observed = min_observed if treatment_name is None else max(1, min_observed)
-    observed_size = rng.randint(lower_observed, max_observed)
-    if treatment_name is None:
-        observed_names = rng.sample(observed_candidates, k=observed_size)
-        sampled_treatment_name = observed_names[0]
-    else:
-        observed_subset = rng.sample(observed_candidates, k=max(0, observed_size - 1))
-        observed_names = [treatment_name, *observed_subset]
-        sampled_treatment_name = treatment_name
+    observed_subset = rng.sample(observed_candidates, k=additional_observed_size)
+    observed_names = [sampled_treatment_name, *observed_subset]
 
     return CausalQueryConfig(
         treatment_name=sampled_treatment_name,
@@ -220,6 +230,22 @@ def _generate_dataset_from_scm(
     rng = random.Random(seed)
     data = scm.generate(num_samples)
     variable_names = list(scm._variables.keys())
+    queryable_names = [
+        name
+        for name, variable in scm._variables.items()
+        if isinstance(variable, GaussianVariable)
+    ]
+
+    if len(queryable_names) < 2:
+        raise ValueError(
+            "Dataset generation requires at least two Gaussian variables to define "
+            "scalar treatment/outcome causal queries."
+        )
+    if treatment_name is not None and treatment_name not in queryable_names:
+        raise ValueError(
+            "treatment_name must refer to a Gaussian variable when generating "
+            "causal-query datasets."
+        )
 
     sampled_queries: list[CausalQueryConfig]
     if queries is None:
@@ -232,6 +258,7 @@ def _generate_dataset_from_scm(
             query = _sample_query(
                 rng,
                 variable_names=variable_names,
+                queryable_names=queryable_names,
                 min_observed=min_observed,
                 treatment_name=treatment_name,
             )
@@ -253,9 +280,17 @@ def _generate_dataset_from_scm(
                 raise ValueError(
                     f"Unknown treatment_name '{query.treatment_name}' in provided queries."
                 )
+            if query.treatment_name not in queryable_names:
+                raise ValueError(
+                    "Provided treatment_name must refer to a Gaussian/queryable variable."
+                )
             if query.outcome_name not in variable_names:
                 raise ValueError(
                     f"Unknown outcome_name '{query.outcome_name}' in provided queries."
+                )
+            if query.outcome_name not in queryable_names:
+                raise ValueError(
+                    "Provided outcome_name must refer to a Gaussian/queryable variable."
                 )
             if query.outcome_name in query.observed_names:
                 raise ValueError("Outcome must not be in observed_names.")
@@ -276,6 +311,8 @@ def _generate_dataset_from_scm(
         # By default, synthesize treatment-specific causal effects/biases for
         # all observed variables so each input feature has causal annotations.
         for observed_treatment_name in query.observed_names:
+            if observed_treatment_name not in queryable_names:
+                continue
             expanded_queries.append(
                 CausalQueryConfig(
                     treatment_name=observed_treatment_name,
