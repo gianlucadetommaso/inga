@@ -36,7 +36,12 @@ class BadToDictVariable(ConstantVariable):
 
 def test_sample_query_requires_at_least_two_variables() -> None:
     with pytest.raises(ValueError, match="At least two variables"):
-        _sample_query(random.Random(0), variable_names=["X"], min_observed=1)
+        _sample_query(
+            random.Random(0),
+            variable_names=["X"],
+            queryable_names=["X"],
+            min_observed=1,
+        )
 
 
 def test_sample_query_rejects_unknown_treatment() -> None:
@@ -44,6 +49,7 @@ def test_sample_query_rejects_unknown_treatment() -> None:
         _sample_query(
             random.Random(0),
             variable_names=["X", "Y"],
+            queryable_names=["X", "Y"],
             min_observed=1,
             treatment_name="Z",
         )
@@ -53,6 +59,7 @@ def test_sample_query_without_explicit_treatment_uses_observed_treatment() -> No
     query = _sample_query(
         random.Random(1),
         variable_names=["X", "Y", "Z"],
+        queryable_names=["X", "Y", "Z"],
         min_observed=1,
     )
 
@@ -64,6 +71,7 @@ def test_sample_query_with_treatment_includes_it_in_observed() -> None:
     query = _sample_query(
         random.Random(2),
         variable_names=["X", "Y", "Z"],
+        queryable_names=["X", "Y", "Z"],
         min_observed=1,
         treatment_name="X",
     )
