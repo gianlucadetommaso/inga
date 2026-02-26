@@ -1114,7 +1114,9 @@ class TestCategoricalOvercontrolAndSelectionModels:
             causal_effect,
             torch.full_like(causal_effect, expected_effect),
             atol=0.2,
-        ), f"Expected hidden-C overcontrol effect {expected_effect}, got {causal_effect}"
+        ), (
+            f"Expected hidden-C overcontrol effect {expected_effect}, got {causal_effect}"
+        )
         assert torch.allclose(
             causal_bias,
             torch.full_like(causal_bias, expected_bias),
