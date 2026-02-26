@@ -83,3 +83,42 @@ class Variable:
         raise NotImplementedError(
             f"Variable '{self.name}' cannot be reconstructed from mean and noise."
         )
+
+    def infer_noise(
+        self,
+        parents: dict[str, Tensor],
+        observed: Tensor,
+    ) -> Tensor:
+        """Infer exogenous noise from observed value and parent values."""
+        raise NotImplementedError(
+            f"Variable '{self.name}' does not implement noise inversion."
+        )
+
+    def log_pdf(
+        self,
+        parents: dict[str, Tensor],
+        observed: Tensor,
+        noise_scale: float = 1.0,
+    ) -> Tensor:
+        """Log density of observed values under the structural distribution."""
+        raise NotImplementedError(
+            f"Variable '{self.name}' does not implement log-density evaluation."
+        )
+
+    def noise_score(self, u: Tensor) -> Tensor:
+        """Score function of exogenous noise: ``∇_u log p(u)``."""
+        raise NotImplementedError(
+            f"Variable '{self.name}' does not implement a noise score function."
+        )
+
+    def noise_neg_log_prob(self, u: Tensor) -> Tensor:
+        """Negative log prior (up to additive constants) evaluated at ``u``."""
+        raise NotImplementedError(
+            f"Variable '{self.name}' does not implement noise negative log-probability."
+        )
+
+    def noise_neg_log_hessian_diag(self, u: Tensor) -> Tensor:
+        """Diagonal of ``∇²_u[-log p(u)]`` evaluated at ``u``."""
+        raise NotImplementedError(
+            f"Variable '{self.name}' does not implement noise prior Hessian."
+        )

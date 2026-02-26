@@ -57,3 +57,39 @@ class GaussianVariable(Variable):
     ) -> Tensor:
         """Sample standard Gaussian noise."""
         return torch.randn(num_samples)
+
+    def infer_noise(
+        self,
+        parents: dict[str, Tensor],
+        observed: Tensor,
+    ) -> Tensor:
+        """Infer additive Gaussian noise from observed values."""
+        sigma = cast(float, self.sigma)
+        return (observed - self.f_mean(parents)) / sigma
+
+    def log_pdf(
+        self,
+        parents: dict[str, Tensor],
+        observed: Tensor,
+        noise_scale: float = 1.0,
+    ) -> Tensor:
+        """Gaussian log density in noise space (up to additive constants)."""
+        u = self.infer_noise(parents=parents, observed=observed)
+        if noise_scale != 1.0:
+            u = u / noise_scale
+        u_sq = u**2
+        while u_sq.ndim > 1:
+            u_sq = u_sq.sum(dim=-1)
+        return -0.5 * u_sq
+
+    def noise_score(self, u: Tensor) -> Tensor:
+        """Score function of standard Gaussian noise: ∇u log p(u) = -u."""
+        return -u
+
+    def noise_neg_log_prob(self, u: Tensor) -> Tensor:
+        """Negative log-prior for standard Gaussian noise (up to constants)."""
+        return 0.5 * u**2
+
+    def noise_neg_log_hessian_diag(self, u: Tensor) -> Tensor:
+        """Diagonal Hessian of ``-log p(u)`` for standard Gaussian noise."""
+        return torch.ones_like(u)

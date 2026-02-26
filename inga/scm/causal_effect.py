@@ -6,6 +6,7 @@ from functools import partial
 from typing import TYPE_CHECKING
 
 from inga.scm.variable.gaussian import GaussianVariable
+from inga.scm.variable.categorical import CategoricalVariable
 
 if TYPE_CHECKING:
     from inga.scm.variable.base import Variable
@@ -169,7 +170,7 @@ class CausalEffectMixin:
         Raises:
             ValueError: If the query is invalid.
         """
-        self._validate_gaussian_variables_for_causal_quantities()
+        self._validate_supported_variables_for_causal_quantities()
 
         if outcome_name in observed:
             raise ValueError("`outcome_name` cannot be included in `observed_name`.")
@@ -178,18 +179,18 @@ class CausalEffectMixin:
         if treatment_name == outcome_name:
             raise ValueError("`treatment_name` and `observed_name` cannot be equal.")
 
-    def _validate_gaussian_variables_for_causal_quantities(self) -> None:
-        """Ensure causal effect/bias routines are used with Gaussian variables only."""
-        non_gaussian = [
+    def _validate_supported_variables_for_causal_quantities(self) -> None:
+        """Ensure causal quantities are used with supported variable families."""
+        unsupported = [
             name
             for name, variable in self._variables.items()
-            if not isinstance(variable, GaussianVariable)
+            if not isinstance(variable, (GaussianVariable, CategoricalVariable))
         ]
-        if non_gaussian:
+        if unsupported:
             raise ValueError(
                 "Causal effect and causal bias are currently supported only for "
-                "SCMs where all variables are instances of GaussianVariable. "
-                f"Found non-Gaussian variables: {sorted(non_gaussian)}."
+                "SCMs with GaussianVariable/CategoricalVariable nodes. "
+                f"Found unsupported variables: {sorted(unsupported)}."
             )
 
     def _find_mediators(
@@ -254,21 +255,27 @@ class CausalEffectMixin:
             if name == treatment_name:
                 values[name] = treatment
             elif name == outcome_name:
-                return variable.f_mean(parents)
+                out = (
+                    variable.f_logits(parents)
+                    if isinstance(variable, CategoricalVariable)
+                    else variable.f_mean(parents)
+                )
+                return out if out.ndim == 0 else out.sum()
             elif name in observed:
                 values[name] = observed[name]
             elif name in mediator_observed:
                 # Compute noise from observed mediator value (detached from gradient)
                 # and use it to reconstruct the counterfactual mediator under intervention.
                 # The noise is detached so the gradient flows only through f_mean.
-                f_mean = variable.f_mean(parents)
-                sigma = variable.sigma
-                if sigma is None:
-                    raise ValueError(
-                        f"Variable '{name}' has no sigma configured. "
-                        "Set sigma to evaluate causal effects."
-                    )
-                noise = ((mediator_observed[name] - f_mean) / sigma).detach()
+                f_mean = (
+                    variable.f_logits(parents)
+                    if isinstance(variable, CategoricalVariable)
+                    else variable.f_mean(parents)
+                )
+                noise = variable.infer_noise(
+                    parents=parents,
+                    observed=mediator_observed[name],
+                ).detach()
                 values[name] = variable.f_from_mean(f_mean=f_mean, u=noise)
             else:
                 values[name] = variable.f(parents, latent[name])

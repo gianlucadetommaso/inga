@@ -6,11 +6,13 @@ distribution over latent noise variables given observations.
 
 import torch
 from torch import Tensor, no_grad, vmap, nn
-from torch.func import grad
+from torch.func import grad, jacrev
 from dataclasses import dataclass
 from functools import partial
 from typing import Mapping
 from inga.scm.variable.base import Variable
+from inga.scm.variable.gaussian import GaussianVariable
+from inga.scm.variable.categorical import CategoricalVariable
 
 
 @dataclass
@@ -84,6 +86,7 @@ class LaplacePosterior:
         """
         self._variables = variables
         self._state: LaplacePosteriorState | None = None
+        self._latent_shapes: dict[str, torch.Size] = {}
         self._adam_scheduler_gamma: float | None = None
         self._lbfgs_line_search_fn: str | None = "strong_wolfe"
         self.configure_map_options(
@@ -213,6 +216,7 @@ class LaplacePosterior:
         latent_names = [name for name in self._variables if name not in observed]
 
         if len(latent_names) == 0:
+            self._latent_shapes = {}
             self.state = LaplacePosteriorState(
                 MAP_components_rav=torch.empty(
                     (num_samples, 1, 0), device=reference.device, dtype=reference.dtype
@@ -408,6 +412,10 @@ class LaplacePosterior:
                 reference=reference,
                 init_scale=init_scale,
             )
+            if i == 0:
+                self._latent_shapes = {
+                    name: u_candidate[name].shape[1:] for name in latent_names
+                }
             candidates.append(u_candidate)
             observed_for_loss = {
                 name: value.to(dtype=next(iter(u_candidate.values())).dtype)
@@ -446,13 +454,21 @@ class LaplacePosterior:
         }
         if init_scale == 0.0:
             z_init = {
-                name: torch.zeros(size, device=reference.device, dtype=opt_dtype)
+                name: torch.zeros(
+                    (size, *self._infer_latent_noise_shape(name)),
+                    device=reference.device,
+                    dtype=opt_dtype,
+                )
                 for name in latent_names
             }
         else:
             z_init = {
                 name: (init_scale / initial_radius)
-                * torch.randn(size, device=reference.device, dtype=opt_dtype)
+                * torch.randn(
+                    (size, *self._infer_latent_noise_shape(name)),
+                    device=reference.device,
+                    dtype=opt_dtype,
+                )
                 for name in latent_names
             }
 
@@ -469,14 +485,14 @@ class LaplacePosterior:
             scheduler = torch.optim.lr_scheduler.ExponentialLR(
                 adam, gamma=self._adam_scheduler_gamma
             )
-        for idx, obs_sigma_scale in enumerate(self._continuation_scales):
+        for idx, obs_noise_scale in enumerate(self._continuation_scales):
             radius = self._latent_trust_radii[
                 min(idx, len(self._latent_trust_radii) - 1)
             ]
             for _ in range(self._continuation_steps):
                 adam.zero_grad()
                 loss = self._posterior_loss_fn(
-                    bounded_u(radius), observed_opt, obs_sigma_scale=obs_sigma_scale
+                    bounded_u(radius), observed_opt, obs_noise_scale=obs_noise_scale
                 ).mean()
                 loss.backward()
                 adam.step()
@@ -498,7 +514,7 @@ class LaplacePosterior:
         def closure() -> Tensor:
             optimizer.zero_grad()
             loss = self._posterior_loss_fn(
-                bounded_u(final_radius), observed_opt, obs_sigma_scale=1.0
+                bounded_u(final_radius), observed_opt, obs_noise_scale=1.0
             ).mean()
             loss.backward()
             return loss
@@ -515,18 +531,22 @@ class LaplacePosterior:
             (refined_loss <= continuation_loss) | ~torch.isfinite(continuation_loss)
         )
 
-        return {
-            name: torch.where(use_refined, refined_u[name], continuation_u[name]).to(
-                dtype=reference.dtype
-            )
-            for name in latent_names
-        }
+        out: dict[str, Tensor] = {}
+        for name in latent_names:
+            r_u = refined_u[name]
+            c_u = continuation_u[name]
+            mask = use_refined
+            while mask.ndim < r_u.ndim:
+                mask = mask.unsqueeze(-1)
+            out[name] = torch.where(mask, r_u, c_u).to(dtype=reference.dtype)
+
+        return out
 
     def _posterior_loss_fn(
         self,
         u_latent: Mapping[str, Tensor],
         observed: dict[str, Tensor],
-        obs_sigma_scale: float = 1.0,
+        obs_noise_scale: float = 1.0,
     ) -> Tensor:
         """Compute per-sample negative log posterior values.
 
@@ -537,14 +557,19 @@ class LaplacePosterior:
         Args:
             u_latent: Dictionary of latent noise values/parameters.
             observed: Dictionary of observed variable values.
-            obs_sigma_scale: Multiplicative scale on observed-noise std used
+            obs_noise_scale: Multiplicative scale on observed-noise terms used
                 during continuation warm-start (1.0 = true objective).
 
         Returns:
             Tensor of shape (batch_size,) with per-sample posterior losses.
         """
         values: dict[str, Tensor] = {}
-        loss = torch.zeros_like(next(iter(observed.values())))
+        reference = next(iter(observed.values()))
+        loss = torch.zeros(
+            len(reference),
+            device=reference.device,
+            dtype=reference.dtype,
+        )
 
         for name, variable in self._variables.items():
             parents = {
@@ -552,23 +577,23 @@ class LaplacePosterior:
                 for pa_name, parent in values.items()
                 if pa_name in variable.parent_names
             }
-            f_mean = variable.f_mean(parents)
 
             if name in observed:
                 values[name] = observed[name]
-                sigma = variable.sigma
-                if sigma is None:
-                    raise ValueError(
-                        f"Variable '{name}' has no sigma configured. "
-                        "Set sigma to evaluate posterior losses."
-                    )
-                u = (observed[name] - f_mean) / (sigma * obs_sigma_scale)
+                loss = loss - variable.log_pdf(
+                    parents=parents,
+                    observed=observed[name],
+                    noise_scale=obs_noise_scale,
+                )
+                continue
 
             else:
                 values[name] = variable.f(parents, u_latent[name])
                 u = u_latent[name]
-
-            loss = loss + 0.5 * u**2
+            prior_term = variable.noise_neg_log_prob(u)
+            while prior_term.ndim > 1:
+                prior_term = prior_term.sum(dim=-1)
+            loss = loss + prior_term
 
         return loss
 
@@ -596,11 +621,28 @@ class LaplacePosterior:
         Raises:
             ValueError: If dimensions of u_latent_rav don't match latent_names.
         """
-        latent_dim = len(latent_names)
-        if u_latent_rav.shape[1] != latent_dim:
+        unsupported = [
+            name
+            for name, variable in self._variables.items()
+            if not isinstance(variable, (GaussianVariable, CategoricalVariable))
+        ]
+        if unsupported:
             raise ValueError(
-                f"`u_latent_rav.shape[1]` and `len(latent_names)` must match, "
-                f"but {u_latent_rav.shape[1]} != {latent_dim}."
+                "Hessian approximation is currently supported only for "
+                "GaussianVariable/CategoricalVariable nodes. "
+                f"Found unsupported variables: {sorted(unsupported)}."
+            )
+
+        latent_dim = u_latent_rav.shape[1]
+        latent_slices = self._latent_slices(latent_names)
+        expected_dim = sum(
+            s.stop - s.start
+            for s in latent_slices.values()  # type: ignore[arg-type]
+        )
+        if expected_dim != latent_dim:
+            raise ValueError(
+                "Raveled latent dimension does not match stored latent shapes: "
+                f"{latent_dim} != {expected_dim}."
             )
 
         num_samples = len(u_latent_rav)
@@ -616,22 +658,45 @@ class LaplacePosterior:
         gn_hessian_rav = torch.zeros(
             (num_samples, latent_dim, latent_dim), device=device, dtype=hessian_dtype
         )
-        latent_diag: list[float] = []
         for name in latent_names:
-            sigma = self._variables[name].sigma
-            if sigma is None:
-                raise ValueError(
-                    f"Variable '{name}' has no sigma configured. "
-                    "Set sigma to evaluate approximate covariance."
-                )
-            latent_diag.append(1 / sigma**2)
-        gn_hessian_rav[:, range(latent_dim), range(latent_dim)] = torch.tensor(
-            latent_diag,
-            device=device,
-            dtype=hessian_dtype,
-        )
+            sl = latent_slices[name]
+            variable = self._variables[name]
+            u_name = u_latent_rav_h[:, sl]
+            if u_name.shape[1] == 1:
+                u_name = u_name[:, 0]
+            h_diag = variable.noise_neg_log_hessian_diag(u_name).to(
+                device=device,
+                dtype=hessian_dtype,
+            )
+            h_flat = h_diag.reshape(num_samples, -1)
+            diag_idx = torch.arange(sl.start, sl.stop, device=device)
+            gn_hessian_rav[:, diag_idx, diag_idx] = h_flat
 
         for observed_name in observed_h:
+            observed_variable = self._variables[observed_name]
+
+            if isinstance(observed_variable, CategoricalVariable):
+                f_logits_wrt_u = partial(
+                    self._f_logits_u,
+                    observed_name=observed_name,
+                    latent_names=latent_names,
+                )
+
+                logits = vmap(lambda u, o: f_logits_wrt_u(u, observed=o))(
+                    u_latent_rav_h,
+                    observed_h,
+                ).to(dtype=hessian_dtype)
+                jacobian = vmap(
+                    lambda u, o: jacrev(partial(f_logits_wrt_u, observed=o))(u)
+                )(u_latent_rav_h, observed_h).to(dtype=hessian_dtype)
+
+                probs = torch.softmax(logits, dim=-1)
+                fisher = torch.diag_embed(probs) - probs[:, :, None] * probs[:, None, :]
+                gn_hessian_rav += torch.einsum(
+                    "nci,ncd,ndj->nij", jacobian, fisher, jacobian
+                )
+                continue
+
             f_mean_wrt_u = partial(
                 self._f_mean_u,
                 observed_name=observed_name,
@@ -649,13 +714,9 @@ class LaplacePosterior:
             scale = torch.sqrt(1.0 + (g_norm / self._jacobian_norm_cap) ** 2)
             g = g / scale[:, None]
 
-            sigma_obs = self._variables[observed_name].sigma
-            if sigma_obs is None:
-                raise ValueError(
-                    f"Variable '{observed_name}' has no sigma configured. "
-                    "Set sigma to evaluate approximate covariance."
-                )
-            gn_hessian_rav += g[:, None] * g[:, :, None] / sigma_obs**2
+            sigma_obs = observed_variable.sigma
+            obs_scale = 1.0 if sigma_obs is None else sigma_obs**2
+            gn_hessian_rav += g[:, None] * g[:, :, None] / obs_scale
 
         # Enforce exact symmetry before Cholesky to avoid numerical skew.
         gn_hessian_rav = 0.5 * (gn_hessian_rav + gn_hessian_rav.transpose(-1, -2))
@@ -720,7 +781,39 @@ class LaplacePosterior:
 
             if name in observed:
                 if name == observed_name:
-                    return self._variables[name].f_mean(parents)
+                    value = self._variables[name].f_mean(parents)
+                    return value if value.ndim == 0 else value.sum()
+
+                values[name] = observed[name]
+            else:
+                values[name] = variable.f(parents, u_latent[name])
+
+        raise ValueError(f"Observed variable '{observed_name}' not found in the SCM.")
+
+    def _f_logits_u(
+        self,
+        u_latent_rav: Tensor,
+        observed: dict[str, Tensor],
+        observed_name: str,
+        latent_names: list[str],
+    ) -> Tensor:
+        """Compute logits of a categorical observed variable as function of latent noise."""
+        u_latent = self._unravel(u_latent_rav, latent_names)
+        values: dict[str, Tensor] = {}
+
+        for name, variable in self._variables.items():
+            parents = {
+                parent_name: values[parent_name]
+                for parent_name in variable.parent_names
+            }
+
+            if name in observed:
+                if name == observed_name:
+                    if not isinstance(variable, CategoricalVariable):
+                        raise ValueError(
+                            f"Observed variable '{observed_name}' is not categorical."
+                        )
+                    return variable.f_logits(parents)
 
                 values[name] = observed[name]
             else:
@@ -738,7 +831,13 @@ class LaplacePosterior:
             Stacked tensor of shape (batch_size, num_latent).
         """
         latent_names = self._get_latent_names(u_latent)
-        return torch.stack([u_latent[name] for name in latent_names], dim=1)
+        return torch.cat(
+            [
+                u_latent[name].reshape(u_latent[name].shape[0], -1)
+                for name in latent_names
+            ],
+            dim=1,
+        )
 
     def _unravel(
         self, u_latent_rav: Tensor, latent_names: list[str]
@@ -752,7 +851,37 @@ class LaplacePosterior:
         Returns:
             Dictionary mapping latent names to tensors.
         """
-        return {
-            name: u_latent_rav.select(dim=-1, index=i)
-            for i, name in enumerate(latent_names)
-        }
+        latent_slices = self._latent_slices(latent_names)
+        out: dict[str, Tensor] = {}
+        for name in latent_names:
+            sl = latent_slices[name]
+            shape = self._latent_shapes.get(name, torch.Size())
+            part = u_latent_rav[..., sl]
+            if len(shape) == 0:
+                out[name] = part.squeeze(-1)
+            else:
+                out[name] = part.reshape(*part.shape[:-1], *shape)
+        return out
+
+    def _latent_slices(self, latent_names: list[str]) -> dict[str, slice]:
+        """Build raveled index slices for each latent variable."""
+        slices: dict[str, slice] = {}
+        cursor = 0
+        for name in latent_names:
+            shape = self._latent_shapes.get(name, torch.Size())
+            width = int(torch.tensor(shape).prod().item()) if len(shape) > 0 else 1
+            slices[name] = slice(cursor, cursor + width)
+            cursor += width
+        return slices
+
+    def _infer_latent_noise_shape(self, name: str) -> tuple[int, ...]:
+        """Infer latent noise shape for optimization initialization."""
+        variable = self._variables[name]
+        if (
+            isinstance(variable, CategoricalVariable)
+            and len(variable.parent_names) == 0
+        ):
+            logits = variable.f_logits({})
+            if logits.ndim == 1:
+                return (logits.shape[-1],)
+        return ()
