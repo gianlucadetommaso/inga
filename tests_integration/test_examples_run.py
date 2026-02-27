@@ -137,6 +137,72 @@ import pytest
             ],
             ["{tmp}/scm_dataset_example.json", "{tmp}/scm_dataset_example.pt"],
         ),
+        (
+            [
+                sys.executable,
+                "-u",
+                "examples/random_scm_collection.py",
+                "--output",
+                "{tmp}/random_scm_collection",
+                "--samples",
+                "16",
+                "--queries",
+                "2",
+                "--num-datasets",
+                "2",
+            ],
+            [
+                r"Generated random SCM dataset collection",
+                r"Saved collection to:",
+                r"Subdatasets:\s*2",
+            ],
+            [
+                "{tmp}/random_scm_collection/manifest.json",
+                "{tmp}/random_scm_collection/dataset_0000.json",
+                "{tmp}/random_scm_collection/dataset_0000.pt",
+            ],
+        ),
+        (
+            [
+                sys.executable,
+                "-u",
+                "examples/random_scm_dataset.py",
+                "--output",
+                "{tmp}/random_scm_collection_alias",
+                "--samples",
+                "16",
+                "--queries",
+                "2",
+                "--num-datasets",
+                "2",
+            ],
+            [
+                r"\[deprecated\] examples\.random_scm_dataset is renamed to examples\.random_scm_collection",
+                r"Generated random SCM dataset collection",
+            ],
+            [
+                "{tmp}/random_scm_collection_alias/manifest.json",
+                "{tmp}/random_scm_collection_alias/dataset_0000.json",
+                "{tmp}/random_scm_collection_alias/dataset_0000.pt",
+            ],
+        ),
+        (
+            [
+                sys.executable,
+                "-u",
+                "examples/analyze_scm_dataset.py",
+                "--input",
+                "datasets/scm_dataset_example",
+                "--output-json",
+                "{tmp}/scm_dataset_analysis.json",
+            ],
+            [
+                r"SCM dataset collection analysis",
+                r"Aggregate coverage \(observed/treatment/outcome/pairs\):",
+                r"Worst missing keys \(effects/biases\):",
+            ],
+            ["{tmp}/scm_dataset_analysis.json"],
+        ),
     ],
 )
 def test_examples_run(
