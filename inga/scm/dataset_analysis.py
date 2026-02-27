@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -233,7 +233,7 @@ def analyze_scm_dataset(
             variable_types[name] = "linear"
             variable_specs[name] = {
                 "class": type(variable).__name__,
-                "sigma": float(variable.sigma),
+                "sigma": float(variable.sigma) if variable.sigma is not None else None,
                 "parents": parent_names,
                 "intercept": float(variable._intercept),
                 "coefs": dict(variable._coefs),
@@ -245,7 +245,7 @@ def analyze_scm_dataset(
             variable_types[name] = "functional"
             variable_specs[name] = {
                 "class": type(variable).__name__,
-                "sigma": float(variable.sigma),
+                "sigma": float(variable.sigma) if variable.sigma is not None else None,
                 "parents": parent_names,
                 "intercept": float(variable._intercept or 0.0),
                 "coefs": dict(variable._coefs or {}),
@@ -259,9 +259,7 @@ def analyze_scm_dataset(
             )
             variable_specs[name] = {
                 "class": type(variable).__name__,
-                "sigma": float(variable.sigma)
-                if getattr(variable, "sigma", None) is not None
-                else None,
+                "sigma": float(variable.sigma) if variable.sigma is not None else None,
                 "parents": parent_names,
                 "transforms": [str(t) for t in maybe_transforms],
                 "extra": _extract_known_variable_extras(variable),
@@ -539,7 +537,12 @@ def compare_real_dataset_to_collection(
         _bounded_inverse(marginal_distance_mean, thresholds.max_marginal_distance),
         _bounded_inverse(correlation_distance, thresholds.max_correlation_distance),
         _bounded_inverse(mean_outside_fraction, thresholds.max_mean_outside_fraction),
-        min(1.0, _safe_ratio(pair_overlap, thresholds.min_pair_overlap)),
+        min(
+            1.0,
+            0.0
+            if thresholds.min_pair_overlap <= 0
+            else pair_overlap / thresholds.min_pair_overlap,
+        ),
     ]
     overall_score = _mean(score_parts)
 
@@ -698,14 +701,14 @@ def generate_collection_analysis_plots(
         for ax, (pair_key, stats) in zip(axes_arr, top_pairs):
             left, right = _parse_pair_key(pair_key)
             xs: list[np.ndarray] = []
-            ys: list[np.ndarray] = []
+            y_vals: list[np.ndarray] = []
             for ds in collection.datasets:
                 if left in ds.data and right in ds.data:
                     xs.append(ds.data[left].detach().cpu().numpy().astype(float))
-                    ys.append(ds.data[right].detach().cpu().numpy().astype(float))
-            if xs and ys:
+                    y_vals.append(ds.data[right].detach().cpu().numpy().astype(float))
+            if xs and y_vals:
                 x_all = np.concatenate(xs)
-                y_all = np.concatenate(ys)
+                y_all = np.concatenate(y_vals)
                 ax.hexbin(x_all, y_all, gridsize=36, cmap="Blues", mincnt=1)
             ax.set_xlabel(left)
             ax.set_ylabel(right)
@@ -907,13 +910,13 @@ def _summary_from_ints(values: list[int]) -> dict[str, float]:
     return {"min": float(min(values)), "max": float(max(values)), "mean": _mean(values)}
 
 
-def _mean(values: list[float | int]) -> float:
+def _mean(values: Sequence[float | int]) -> float:
     if not values:
         return 0.0
     return float(sum(float(v) for v in values) / len(values))
 
 
-def _std(values: list[float | int]) -> float:
+def _std(values: Sequence[float | int]) -> float:
     if len(values) <= 1:
         return 0.0
     arr = np.array([float(v) for v in values], dtype=float)
@@ -1026,7 +1029,7 @@ def _bounded_inverse(value: float, threshold: float) -> float:
     return float(max(0.0, 1.0 - (value / threshold)))
 
 
-def _safe_ratio(numerator: int, denominator: int) -> float:
+def _safe_ratio(numerator: float | int, denominator: float | int) -> float:
     return 0.0 if denominator <= 0 else float(numerator) / float(denominator)
 
 
